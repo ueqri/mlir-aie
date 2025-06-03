@@ -31,8 +31,8 @@ struct AIEPlaceTilesPass : public AIEPlaceTilesBase<AIEPlaceTilesPass> {
       auto tileOp = tileOps[i];
       auto node = input["nodes"][i];
 
-      int col = node["col_id"];
-      int row = node["row_id"];
+      int col = node["col_x"];
+      int row = node["row_y"];
 
       // Replace attributes
       tileOp->setAttr("col", IntegerAttr::get(IntegerType::get(tileOp.getContext(), 32), col));

@@ -34,17 +34,17 @@ struct AIEExtractObjectFifoPass
     llvm::DenseMap<Value, int> tileIdMap;
     for (auto tileOp : device.getOps<TileOp>()) {
       int row = tileOp.getRow(), col = tileOp.getCol();
-      std::string type = "Core";
+      std::string type = "COMP";
       if (row == 0)
-        type = "Shim";
+        type = "SHIM";
       else if (row == 1)
-        type = "Mem";
+        type = "MEM";
 
       json node = {
           {"id", id},
           {"type", type},
-          {"col_id", col},
-          {"row_id", row}};
+          {"col_x", col},
+          {"row_y", row}};
       output["nodes"].push_back(node);
       tileIdMap[tileOp.getResult()] = id;
       ++id;
@@ -72,10 +72,10 @@ struct AIEExtractObjectFifoPass
       std::vector<int64_t> depths;
       auto elemAttr = objectFifo.getElemNumberAttr();
       if (auto intAttr = dyn_cast<IntegerAttr>(elemAttr)) {
-        depths.push_back(intAttr.getInt() * byteSize);
+        depths.push_back(intAttr.getInt());
       } else if (auto arrayAttr = dyn_cast<ArrayAttr>(elemAttr)) {
         for (auto val : arrayAttr.getValue()) {
-          depths.push_back(cast<IntegerAttr>(val).getInt() * byteSize);
+          depths.push_back(cast<IntegerAttr>(val).getInt());
         }
       } else {
         objectFifo.emitError("Unsupported elemNumber format");
@@ -85,7 +85,8 @@ struct AIEExtractObjectFifoPass
       json net = {
           {"src_id", sId},
           {"dst_ids", dIds},
-          {"data_size", depths}};
+          {"depths", depths},
+          {"byte_size_per_depth", byteSize}};
       output["nets"].push_back(net);
     }
 
