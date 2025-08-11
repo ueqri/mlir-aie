@@ -17,6 +17,8 @@ add_mlir_dialect_library(
   AIECanonicalizeDevice.cpp
   AIEExtractObjectFifo.cpp
   AIEPlaceTiles.cpp
+  AIEObjectFifoToPath.cpp
+  AIEPathToRouting.cpp
   AIELocalizeLocks.cpp
   AIENormalizeAddressSpaces.cpp
   AIEVectorOpt.cpp

@@ -268,19 +268,33 @@ struct AIEGenerateColumnControlOverlayPass
                                          WireBundle shimWireBundle,
                                          bool isShimMM2S) {
     SmallVector<int> availableShimChans;
-    DenseMap<int, AIE::FlowOp> flowOpUsers;
+    DenseSet<int> usedChans;
+
     const auto &targetModel = device.getTargetModel();
 
     for (auto user : shimTile.getResult().getUsers()) {
-      auto fOp = dyn_cast<AIE::FlowOp>(user);
-      if (!fOp)
-        continue;
-      if (isShimMM2S && fOp.getSource() == shimTile &&
-          fOp.getSourceBundle() == shimWireBundle)
-        flowOpUsers[fOp.getSourceChannel()] = fOp;
-      else if (!isShimMM2S && fOp.getDest() == shimTile &&
-               fOp.getDestBundle() == shimWireBundle)
-        flowOpUsers[fOp.getDestChannel()] = fOp;
+      if (auto fOp = dyn_cast<AIE::FlowOp>(user)) {
+        if (isShimMM2S && fOp.getSource() == shimTile &&
+            fOp.getSourceBundle() == shimWireBundle)
+          usedChans.insert(fOp.getSourceChannel());
+        else if (!isShimMM2S && fOp.getDest() == shimTile &&
+                 fOp.getDestBundle() == shimWireBundle)
+          usedChans.insert(fOp.getDestChannel());
+      } else if (auto pOp = dyn_cast<AIE::CircuitPathOp>(user)) {
+        if (isShimMM2S && pOp.getSource() == shimTile &&
+            pOp.getSourceBundle() == shimWireBundle)
+          usedChans.insert(pOp.getSourceChannel());
+        else if (!isShimMM2S && pOp.getDestBundle() == shimWireBundle) {
+          auto dests = pOp.getDests();
+          auto destChans = pOp.getDestChannels();
+          assert(dests.size() == destChans.size() 
+                    && "Mismatch in dest arrays");
+          for (auto [dest, chan] : llvm::zip(dests, destChans)) {
+            if (dest == shimTile)
+              usedChans.insert(chan);
+          }
+        }
+      }
     }
     int numShimChans = 0;
     if (isShimMM2S)
@@ -290,7 +304,7 @@ struct AIEGenerateColumnControlOverlayPass
       numShimChans = targetModel.getNumDestShimMuxConnections(
           shimTile.colIndex(), shimTile.rowIndex(), shimWireBundle);
     for (int i = 0; i < numShimChans; i++) {
-      if (!flowOpUsers.count(i))
+      if (!usedChans.count(i))
         availableShimChans.push_back(i);
     }
 

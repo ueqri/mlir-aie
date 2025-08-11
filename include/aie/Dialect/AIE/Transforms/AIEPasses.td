@@ -149,22 +149,6 @@ def AIERoutePathfinderFlows : Pass<"aie-create-pathfinder-flows", "DeviceOp"> {
   ];
 }
 
-def AIEExtractObjectFifo : Pass<"aie-extract-fifo", "DeviceOp"> {
-  let summary = "Extract connection information for placer";
-  let description = [{ 
-  }];
-
-  let constructor = "xilinx::AIE::createAIEExtractObjectFifoPass()";
-}
-
-def AIEPlaceTiles : Pass<"aie-place-tiles", "DeviceOp"> {
-  let summary = "Re-place tiles based on placer results";
-  let description = [{ 
-  }];
-
-  let constructor = "xilinx::AIE::createAIEPlaceTilesPass()";
-}
-
 def AIEFindFlows : Pass<"aie-find-flows", "DeviceOp"> {
   let summary = "Recover flows from switchbox configuration";
   let description = [{
@@ -190,6 +174,53 @@ def AIEVectorOpt : Pass<"aie-vector-opt", "mlir::func::FuncOp"> {
   }];
 
   let constructor = "xilinx::AIE::createAIEVectorOptPass()";
+}
+
+def AIEExtractObjectFifo : Pass<"aie-extract-fifo", "DeviceOp"> {
+  let summary = "Extract connection information for placer";
+  let description = [{ 
+  }];
+
+  let constructor = "xilinx::AIE::createAIEExtractObjectFifoPass()";
+}
+
+def AIEPlaceTiles : Pass<"aie-place-tiles", "DeviceOp"> {
+  let summary = "Re-place tiles based on placer results";
+  let description = [{ 
+  }];
+
+  let constructor = "xilinx::AIE::createAIEPlaceTilesPass()";
+}
+
+def AIEObjectFifoToPath : Pass<"aie-objectFifo-to-path", "DeviceOp"> {
+  let summary = "Convert aie.objectFifo operations to aie.path operations";
+  let description = [{
+    Convert each aie.objectFifo.createObjectFifo operation into PnR's path operation. 
+    Convert aie.objectFifo.acquire, aie.objectFifo.release and aie.objectFifo.subviewAccess
+    operations into useLock operations by keeping track of acquire/release operations on each objectFifo by
+    each process.
+  }];
+
+  let constructor = "xilinx::AIE::createAIEObjectFifoToPathPass()";
+  let dependentDialects = [
+    "mlir::scf::SCFDialect",
+    "mlir::func::FuncDialect",
+    "mlir::arith::ArithDialect",
+    "mlir::memref::MemRefDialect",
+    "xilinx::AIE::AIEDialect",
+  ];
+}
+
+def AIEPathToRouting : Pass<"aie-path-to-routing", "DeviceOp"> {
+  let summary = "Convert aie.path operations to aie.flow and aie.packetflow operations";
+  let description = [{
+    Convert Path operations into physical interconnects.
+  }];
+
+  let constructor = "xilinx::AIE::createAIEPathToRoutingPass()";
+  let dependentDialects = [
+    "xilinx::AIE::AIEDialect",
+  ];
 }
 
 def AIEObjectFifoStatefulTransform : Pass<"aie-objectFifo-stateful-transform", "DeviceOp"> {
