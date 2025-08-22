@@ -12,11 +12,12 @@ from ...dialects.aie import TileOp
 class Tile:
     """An object representing a single component denoted by coordinates on a device."""
 
-    def __init__(self, col: int, row: int, allocation_scheme: str = None) -> None:
+    def __init__(self, col: int, row: int, allocation_scheme: str = None, logical: bool = False) -> None:
         self.col: int = col
         self.row: int = row
         self.allocation_scheme: str | None = allocation_scheme
         self._op: TileOp | None = None
+        self.logical: bool = logical
         # TODO: each tile should probably have a type, e.g., Shim or Mem or Compute
 
     @property
@@ -34,6 +35,8 @@ class Tile:
     def __eq__(self, other: object) -> bool:
         if not isinstance(other, Tile):
             return NotImplemented
+        if self.logical or other.logical:
+            return id(self) == id(other)
         return self.col == other.col and self.row == other.row
 
     def __str__(self) -> str:

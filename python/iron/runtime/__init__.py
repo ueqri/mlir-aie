@@ -1,1 +1,1 @@
-from .runtime import Runtime
+from .runtime import Runtime, RuntimeEndpoint

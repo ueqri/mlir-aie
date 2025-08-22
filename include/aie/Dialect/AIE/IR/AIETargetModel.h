@@ -696,7 +696,7 @@ public:
     return 6; /* 1 Shim row, 1 memtile row, and 4 Core rows. */
   }
 
-  bool isCoreTile(int col, int row) const override { return row > 1; }
+  bool isCoreTile(int col, int row) const override { return row > 1 || row == -1; }
   bool isMemTile(int col, int row) const override { return row == 1; }
 
   bool isShimPLTile(int col, int row) const override {
