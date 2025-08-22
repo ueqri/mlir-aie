@@ -515,7 +515,7 @@ def AIE_FlowOp: AIE_Op<"flow", []> {
   }];
 
   let assemblyFormat = [{
-    `(` $source `:` $source_bundle `:` $source_channel `,` $dest `,` $dest_bundle `:` $dest_channel `)` attr-dict
+    `(` $source `,` $source_bundle `:` $source_channel `,` $dest `,` $dest_bundle `:` $dest_channel `)` attr-dict
   }];
 
   let extraClassDeclaration = [{
