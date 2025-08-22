@@ -276,9 +276,9 @@ struct AIEPathToRoutingPass : public AIEPathToRoutingBase<AIEPathToRoutingPass> 
 
         llvm::outs() << "\tSrc: " << srcTileId << " -> "
                      << "Dst[" << dst_i << "]: " << dstTileId << "\n";
-        // create full path from src to dst
-        pathTiles[dst_i].insert(pathTiles[dst_i].begin(), srcTileId);
-        pathTiles[dst_i].push_back(dstTileId);
+        // // create full path from src to dst
+        // pathTiles[dst_i].insert(pathTiles[dst_i].begin(), srcTileId);
+        // pathTiles[dst_i].push_back(dstTileId);
         llvm::outs() << "\t\tPath: ";
         for (const auto &hop : pathTiles[dst_i]) {
           llvm::outs() << hop << " ";

@@ -36,20 +36,18 @@ struct AIEPlaceTilesPass : public AIEPlaceTilesBase<AIEPlaceTilesPass> {
       int col = node["col_x"];
       int row = node["row_y"];
 
-      // Replace attributes
-      //tileOp->setAttr("col", builder.getI32IntegerAttr(col));
       tileOp.setCol(col);
-      tileOp->setAttr("row", builder.getI32IntegerAttr(row));
+      tileOp.setRow(row);
     }
     llvm::outs() << "Tiles placed successfully.\n";
     for (size_t i = 0; i < fifoOps.size(); i++) {
       auto fifoOp = fifoOps[i];
-      auto net  = input["nets"][i];
+      auto route_info = input["nets"][i]["routing_info"];
 
-      if (net["connection_type"] == "circuit_switch") {
-        SmallVector<IntArray2DAttr> outerArray; 
+      if (route_info["connection_type"] == "circuit_switch") {
+        SmallVector<IntArray2DAttr> outerArray;
 
-        for (const auto &hopPath : net["intermediates"]) {
+        for (const auto &hopPath : route_info["intermediates"]) {
           SmallVector<IntArray1DAttr> innerArray; 
 
           for (const auto &coords : hopPath) {
@@ -69,8 +67,8 @@ struct AIEPlaceTilesPass : public AIEPlaceTilesBase<AIEPlaceTilesPass> {
         fifoOp.setHopTileIdsAttr(fullAttr);
         fifoOp.setVia_DMAAttr(builder.getBoolAttr(true));
       }
-      else if (net["connection_type"] == "neighbour_sharing") {
-        int shareDirection = net["share_direction"];
+      else if (route_info["connection_type"] == "neighbor_sharing") {
+        int shareDirection = route_info["share_direction"];
         fifoOp.setViaSharedMemAttr(builder.getI32IntegerAttr(shareDirection));
       }
     }

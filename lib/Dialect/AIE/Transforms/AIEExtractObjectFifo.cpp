@@ -30,8 +30,9 @@ struct AIEExtractObjectFifoPass
     json output;
     output["nodes"] = json::array();
     output["nets"] = json::array();
+    output["links"] = json::array();
 
-    llvm::DenseMap<Value, int> tileIdMap;
+    DenseMap<Value, int> tileIdMap;
     for (auto tileOp : device.getOps<TileOp>()) {
       int row = tileOp.getRow(), col = tileOp.getCol();
       std::string type = "COMP";
@@ -46,10 +47,11 @@ struct AIEExtractObjectFifoPass
           {"col_x", col},
           {"row_y", row}};
       output["nodes"].push_back(node);
-      tileIdMap[tileOp.getResult()] = id;
-      ++id;
+      tileIdMap[tileOp.getResult()] = id++;
     }
 
+    id = 0;
+    DenseMap<ObjectFifoCreateOp, int> fifoIdMap;
     for (auto objectFifo : device.getOps<ObjectFifoCreateOp>()) {
       int sId = tileIdMap[objectFifo.getProducerTile()];
       std::vector<int> dIds;
@@ -83,11 +85,31 @@ struct AIEExtractObjectFifoPass
       }
 
       json net = {
+          {"net_id", id},
           {"src_id", sId},
           {"dst_ids", dIds},
           {"depths", depths},
           {"byte_size_per_depth", byteSize}};
       output["nets"].push_back(net);
+      fifoIdMap[objectFifo] = id++;
+    }
+
+    for (auto linkFifo : device.getOps<ObjectFifoLinkOp>()) {
+      auto sFifos = linkFifo.getInputObjectFifos();
+      auto dFifos = linkFifo.getOutputObjectFifos();
+      std::vector<int> sTIds;
+      std::vector<int> dTIds;
+      for (auto sFifo : sFifos) {
+        sTIds.push_back(fifoIdMap[sFifo]);
+      }
+      for (auto dFifo : dFifos) {
+        dTIds.push_back(fifoIdMap[dFifo]);
+      }
+      json link = {
+        {"src_net_ids", sTIds},
+        {"dst_net_ids", dTIds}
+      };
+      output["links"].push_back(link);
     }
 
     nFile << output.dump(2);
