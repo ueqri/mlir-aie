@@ -12,7 +12,7 @@ from ..dialects.aie import device, tile
 
 from .device import Device
 from .runtime import Runtime
-from .placers import Placer
+from .placers import Placer, NullPlacer
 from .resolvable import Resolvable
 
 # import aie.utils.trace as trace_utils
@@ -64,12 +64,19 @@ class Program:
                     )
 
                 # Collect all tiles
-                all_tiles = []
-                for w in self._rt.workers:
-                    all_tiles.append(w.tile)
-                for f in all_fifos:
-                    all_tiles.extend([e.tile for e in f.all_of_endpoints()])
-
+                if isinstance(placer, NullPlacer):
+                    all_tiles = set()
+                    for w in self._rt.workers:
+                        all_tiles.add(w.tile)   
+                    for f in all_fifos:
+                        all_tiles.update(e.tile for e in f.all_of_endpoints())
+                else:
+                    all_tiles = []
+                    for w in self._rt.workers:
+                        all_tiles.append(w.tile)
+                    for f in all_fifos:
+                        all_tiles.extend([e.tile for e in f.all_of_endpoints()])
+                    
                 # Resolve tiles
                 for t in all_tiles:
                     self._device.resolve_tile(t)
@@ -112,7 +119,6 @@ class Program:
 
                 # In/Out Sequence
                 self._rt.resolve()
-
             self._print_verify(ctx)
             return ctx.module
 
