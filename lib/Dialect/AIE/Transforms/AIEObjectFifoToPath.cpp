@@ -137,8 +137,8 @@ struct AIEObjectFifoToPathPass : public AIEObjectFifoToPathBase<AIEObjectFifoToP
   
   /// Function that returns true if two tiles in the AIE array share a memory
   /// module. share_direction is equal to:
-  ///   * -1 if the shared memory module is that of the first input tile,
-  ///   * 1 if it is that of the second input tile,
+  ///   * 1 if the shared memory module is that of the first input tile,
+  ///   * -1 if it is that of the second input tile,
   ///   * 0 is no memory module is shared.
   bool isSharedMemory(TileOp a, TileOp b, int *share_direction) {
     const auto &targetModel = getTargetModel(a.getOperation());
@@ -162,9 +162,9 @@ struct AIEObjectFifoToPathPass : public AIEObjectFifoToPathBase<AIEObjectFifoToP
         b.colIndex(), b.rowIndex(), a.colIndex(), a.rowIndex());
 
     if (leftShared)
-      *share_direction = -1;
-    else if (rightShared)
       *share_direction = 1;
+    else if (rightShared)
+      *share_direction = -1;
     else
       *share_direction = 0;
 
@@ -312,10 +312,10 @@ struct AIEObjectFifoToPathPass : public AIEObjectFifoToPathBase<AIEObjectFifoToP
     // been split, so each FIFO creates its elements on the producer tile.
     // (Note: cons-Fifo's producer tile is cons itself, see line 1102)
     // If PnR decides that neighbour sharing should use a buffer on producer 
-    // side (share_dir = -1), we also create the element on the producer tile.
-    // Otherwise (share_dir = 1), the element is created on the consumer side.
+    // side (share_dir = 1), we also create the element on the producer tile.
+    // Otherwise (share_dir = -1), the element is created on the consumer side.
     TileOp creation_tile;
-    if (share_direction == 0 || share_direction == -1)
+    if (share_direction == 0 || share_direction == 1)
       creation_tile = op.getProducerTileOp();
     else {
       auto consumerTileOp =
@@ -1275,7 +1275,7 @@ struct AIEObjectFifoToPathPass : public AIEObjectFifoToPathBase<AIEObjectFifoToP
                   builder.getI32IntegerAttr(prodMaxAcquire));
           }
         }
-        createObjectFifoElements(builder, lockAnalysis, createOp, -1);
+        createObjectFifoElements(builder, lockAnalysis, createOp, 0);
       }
     }
     llvm::outs() << "made buffer/locks\n";

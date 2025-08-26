@@ -32,7 +32,7 @@ using SwitchFreeChans = struct SwitchFreeChans {
   std::map<WireBundle, std::set<int>> dstChans;
 };
 
-using Interconnects = std::set<std::pair<TileID, TileID>>;
+using Interconnects = std::map<std::pair<TileID, TileID>, Port>;
 
 struct AIEPathToRoutingPass : public AIEPathToRoutingBase<AIEPathToRoutingPass> {
   llvm::DenseMap<TileID, TileOp> coordToTile;
@@ -276,9 +276,7 @@ struct AIEPathToRoutingPass : public AIEPathToRoutingBase<AIEPathToRoutingPass> 
 
         llvm::outs() << "\tSrc: " << srcTileId << " -> "
                      << "Dst[" << dst_i << "]: " << dstTileId << "\n";
-        // // create full path from src to dst
-        // pathTiles[dst_i].insert(pathTiles[dst_i].begin(), srcTileId);
-        // pathTiles[dst_i].push_back(dstTileId);
+
         llvm::outs() << "\t\tPath: ";
         for (const auto &hop : pathTiles[dst_i]) {
           llvm::outs() << hop << " ";
@@ -289,30 +287,30 @@ struct AIEPathToRoutingPass : public AIEPathToRoutingBase<AIEPathToRoutingPass> 
           const auto &tileA = pathTiles[dst_i][i];
           const auto &tileB = pathTiles[dst_i][i + 1];
 
-          // skip if already processed
-          if (interconnects.find({tileA, tileB}) != interconnects.end())
-            continue;
-
           auto [bundleA, bundleB] = getWireBundles(tileA, tileB);
-          // if A is src sb, also set input port
-          if (i == 0) {
-            Port pInA = Port{srcBundle, srcChannel};
-            sbConfigs[tileA].addSrc(pInA);
+          auto [it, newInsert] = interconnects.try_emplace({tileA, tileB}, Port{});
+          Port& pInB = it->second;
+
+          // If new interconnect, initialize ports on both tiles,
+          // else reuse first tile's port (multicast)
+          if (newInsert) {
+            if (i == 0) {
+              // if A is src sb, also set input port
+              sbConfigs[tileA].addSrc(Port{srcBundle, srcChannel});
+            }
+            // set output port for tile A
+            if (sbConfigs.find(tileA) == sbConfigs.end())
+              pathOp.emitOpError("Setting output port for sb with missing input port")
+                  << " at sb(" << tileA.col << ", " << tileA.row << ")";
+            else
+              sbConfigs[tileA].addDst(Port{bundleA, getChannel(tileA, bundleA, false, pathOp)});
+
+            // Initialize input port for tile B
+            pInB = Port{bundleB, getChannel(tileB, bundleB, true, pathOp)};
           }
-
-          // set output port for tile A
-          Port pOutA = Port{bundleA, getChannel(tileA, bundleA, false, pathOp)};
-          if (sbConfigs.find(tileA) == sbConfigs.end())
-            pathOp.emitOpError("Setting output port for sb with missing input port")
-                << " at sb(" << tileA.col << ", " << tileA.row << ")";
-          else
-            sbConfigs[tileA].addDst(pOutA);
-
+          
           // set input port for tile B
-          Port pInB = Port{bundleB, getChannel(tileB, bundleB, true, pathOp)};
           sbConfigs[tileB].addSrc(pInB);
-
-          interconnects.insert({tileA, tileB});
         }
 
         // set output port for dst tile
