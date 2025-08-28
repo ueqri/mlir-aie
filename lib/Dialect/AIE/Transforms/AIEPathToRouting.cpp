@@ -81,26 +81,6 @@ struct AIEPathToRoutingPass : public AIEPathToRoutingBase<AIEPathToRoutingPass> 
       }
     }
 
-    //debug print sbFreeChans at (6, 4)
-    if (auto it = sbFreeChans.find({6, 4}); it != sbFreeChans.end()) {
-      llvm::outs() << "sbFreeChans at (6, 4):\n";
-      for (const auto &[bundle, channels] : it->second.srcChans) {
-        llvm::outs() << "  " << stringifyEnum(bundle) << ": ";
-        for (int channel : channels) {
-          llvm::outs() << channel << " ";
-        }
-        llvm::outs() << "\n";
-      }
-
-      for (const auto &[bundle, channels] : it->second.dstChans) {
-        llvm::outs() << "  " << stringifyEnum(bundle) << ": ";
-        for (int channel : channels) {
-          llvm::outs() << channel << " ";
-        }
-        llvm::outs() << "\n";
-      }
-    }
-
     // Initialize switchbox configs
     for (auto pathOp : device.getOps<CircuitPathOp>()) {
       sbConfigList[pathOp] = {};
@@ -239,10 +219,11 @@ struct AIEPathToRoutingPass : public AIEPathToRoutingBase<AIEPathToRoutingPass> 
 
     builder.restoreInsertionPoint(point);
 
-    llvm::outs() << "\t\taddConnection() (" << op.colIndex() << ","
-                 << op.rowIndex() << ") " << stringifyWireBundle(inBundle)
-                 << inIndex << " -> " << stringifyWireBundle(outBundle)
-                 << outIndex << "\n";
+    LLVM_DEBUG(llvm::dbgs()
+               << "\t\taddConnection() (" << op.colIndex() << ","
+               << op.rowIndex() << ") " << stringifyWireBundle(inBundle)
+               << inIndex << " -> " << stringifyWireBundle(outBundle)
+               << outIndex << "\n");
   }
 
   void runOnOperation() override {
@@ -252,7 +233,7 @@ struct AIEPathToRoutingPass : public AIEPathToRoutingBase<AIEPathToRoutingPass> 
     int maxRow = targetModel.rows();
 
     initConfigs(maxCol, maxRow, device, targetModel);
-    llvm::outs() << "Begin Path to Routing Pass\n";
+    LLVM_DEBUG(llvm::dbgs() << "Begin Path to Routing Pass\n");
     //===------------------------------------------------------------------===//
     // Set up switchbox configs and interconnects for each CircuitPathOp
     //===------------------------------------------------------------------===//
@@ -260,28 +241,37 @@ struct AIEPathToRoutingPass : public AIEPathToRoutingBase<AIEPathToRoutingPass> 
       Interconnects interconnects;
       SwitchConfigs &sbConfigs = sbConfigList[pathOp];
 
-      auto srcTile = cast<TileOp>(pathOp.getSource().getDefiningOp());
-      TileID srcTileId = {srcTile.colIndex(), srcTile.rowIndex()};
       WireBundle srcBundle = pathOp.getSourceBundle();
       int srcChannel = pathOp.getSourceChannel();
       llvm::ArrayRef<IntArray2DAttr> hops = pathOp.getHopTileIds();
       std::vector<std::vector<TileID>> pathTiles =
           getTilesAlongPath(hops);
-      llvm::outs() << "Processing pathOp with Src: " << srcTileId << "\n";
+      LLVM_DEBUG({
+        auto srcTile = cast<TileOp>(pathOp.getSource().getDefiningOp());
+        TileID srcTileId = {srcTile.colIndex(), srcTile.rowIndex()};
+        llvm::dbgs() << "Processing pathOp with Src: " << srcTileId << "\n";
+      });
       for (size_t dst_i = 0; dst_i < pathOp.getDests().size(); dst_i++) {
         auto dstTile = cast<TileOp>(pathOp.getDests()[dst_i].getDefiningOp());
         TileID dstTileId = {dstTile.colIndex(), dstTile.rowIndex()};
         WireBundle dstBundle = pathOp.getDestBundle();
         int dstChannel = pathOp.getDestChannels()[dst_i];
 
-        llvm::outs() << "\tSrc: " << srcTileId << " -> "
-                     << "Dst[" << dst_i << "]: " << dstTileId << "\n";
+        LLVM_DEBUG({
+          auto srcTile = cast<TileOp>(pathOp.getSource().getDefiningOp());
+          TileID srcTileId = {srcTile.colIndex(), srcTile.rowIndex()};
+          TileID dstTileId = {dstTile.colIndex(), dstTile.rowIndex()};
+          llvm::dbgs() << "\tSrc: " << srcTileId << " -> "
+                      << "Dst[" << dst_i << "]: " << dstTileId << "\n";
+        });
 
-        llvm::outs() << "\t\tPath: ";
-        for (const auto &hop : pathTiles[dst_i]) {
-          llvm::outs() << hop << " ";
-        }
-        llvm::outs() << "\n";
+        LLVM_DEBUG({
+          llvm::dbgs() << "\t\tPath: ";
+          for (const auto &hop : pathTiles[dst_i])
+            llvm::dbgs() << hop << " ";
+          llvm::dbgs() << "\n";
+        });
+
         // pathTiles is at least [src, dst], loop runs >= 1
         for (size_t i = 0; i < pathTiles[dst_i].size() - 1; i++) {
           const auto &tileA = pathTiles[dst_i][i];
@@ -316,18 +306,8 @@ struct AIEPathToRoutingPass : public AIEPathToRoutingBase<AIEPathToRoutingPass> 
         // set output port for dst tile
         sbConfigs[dstTileId].addDst(Port{dstBundle, dstChannel});
       }
-
-      //debug
-      llvm::outs() << "Finished processing pathOp with Src: " << srcTileId << ", Sb configs:\n";
-      for (const auto &[tileId, config] : sbConfigList[pathOp]) {
-        llvm::outs() << "\t sb: " << tileId << "\n";
-        for (size_t i = 0; i < config.srcs.size(); i++) {
-          llvm::outs() << "\t\t" << config.srcs[i] << " -> " 
-                       << config.dsts[i] << "\n";
-        }
-      }
     }
-    llvm::outs() << "Building aie connections\n";
+    LLVM_DEBUG(llvm::dbgs() << "Building aie connections\n");
     OpBuilder builder = OpBuilder::atBlockTerminator(device.getBody());
     for (auto pathOp : device.getOps<CircuitPathOp>()) {
       auto srcTile = cast<TileOp>(pathOp.getSource().getDefiningOp());

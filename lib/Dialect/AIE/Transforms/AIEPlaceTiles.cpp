@@ -26,9 +26,9 @@ struct AIEPlaceTilesPass : public AIEPlaceTilesBase<AIEPlaceTilesPass> {
     json input = json::parse(jsonFile);
 
     auto tileOps = llvm::to_vector(device.getOps<TileOp>());
-    llvm::outs() << "Number of tiles: " << tileOps.size() << "\n";
+    LLVM_DEBUG(llvm::dbgs() << "Number of tiles: " << tileOps.size() << "\n");
     auto fifoOps = llvm::to_vector(device.getOps<ObjectFifoCreateOp>());
-    llvm::outs() << "Number of FIFOs: " << fifoOps.size() << "\n";
+    LLVM_DEBUG(llvm::dbgs() << "Number of FIFOs: " << fifoOps.size() << "\n");
     for (size_t i = 0; i < tileOps.size(); i++) {
       auto tileOp = tileOps[i];
       auto node = input["nodes"][i];
@@ -39,7 +39,7 @@ struct AIEPlaceTilesPass : public AIEPlaceTilesBase<AIEPlaceTilesPass> {
       tileOp.setCol(col);
       tileOp.setRow(row);
     }
-    llvm::outs() << "Tiles placed successfully.\n";
+    LLVM_DEBUG(llvm::dbgs() << "Tiles placed successfully.\n");
     for (size_t i = 0; i < fifoOps.size(); i++) {
       auto fifoOp = fifoOps[i];
       auto route_info = input["nets"][i]["routing_info"];
@@ -72,7 +72,7 @@ struct AIEPlaceTilesPass : public AIEPlaceTilesBase<AIEPlaceTilesPass> {
         fifoOp.setViaSharedMemAttr(builder.getI32IntegerAttr(shareDirection));
       }
     }
-    llvm::outs() << "FIFOs configured successfully.\n";
+    LLVM_DEBUG(llvm::dbgs() << "FIFOs configured successfully.\n");
   }
 };
 
