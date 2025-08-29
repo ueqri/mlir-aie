@@ -430,6 +430,65 @@ def AIE_ConnectOp: AIE_Op<"connect", [ParentOneOf<["SwitchboxOp", "ShimMuxOp"]> 
   }];
 }
 
+// These are temporary dialects, the goal is to elevate these to generic set of routing dialects for the future of PnR
+def AIE_NeighbourPathOp : AIE_Op<"neighbour_path", []> {
+  let arguments = (
+    ins Index:$source,
+        Variadic<Index>:$dests,
+        AIEI32Attr:$share_direction
+  );
+  let summary = "An explicit path op to indicate using local memory access between cores";
+  let description = [{
+    The aie.neighbour_path operation represents a path between two adjacent cores that is expected to use local memory.
+    In the current architecture, adjacent tiles always communicate via local memory access. However, in cases
+    where they use circuit‑switched connections, we need a way to explicitly indicate which pairs do use local
+    memory access. This op is removed during PnR.
+
+    Example:
+    ```
+      %00 = aie.tile(0, 0)
+      %11 = aie.tile(1, 1)
+      aie.neighbour_path(%00, %11)
+    ```
+  }];
+  let assemblyFormat = [{
+    `(` $source `,` $dests `)` attr-dict
+  }];
+}
+
+def AIE_CircuitPathOp : AIE_Op<"circuit_path", []> {
+  let arguments = (
+    ins Index:$source,
+        WireBundle:$source_bundle,
+        ConfinedAttr<AIEI32Attr, [IntMinValue<0>]>:$source_channel,
+        Variadic<Index>:$dests,
+        WireBundle:$dest_bundle,
+        ConfinedAttr<DenseI32ArrayAttr, [DenseArrayNonNegative<DenseI32ArrayAttr>]>:$dest_channels,
+        IntArray3DAttr:$hop_tile_ids
+  );
+
+  let summary = "A circuit-switched connection between cores";
+  let description = [{
+    The `aie.path` operation represents a circuit switched connection between two 
+    `aie.tile` operations, with explicit intermediate path. During routing, this is replaced by `aie.connect` 
+    operations which represent the programmed connections inside a switchbox, along with `aie.wire` operations 
+    which represent physical connections between switchboxes and other components.
+
+    Example:
+    ```
+      %00 = aie.tile(0, 0)
+      %11 = aie.tile(1, 1)
+      %01 = aie.tile(0, 1)
+      aie.circuit_path(%00, "DMA" : 0, %11, "Core" : 1, [%01])
+    ```
+  }];
+
+  let assemblyFormat = [{
+    `(` $source `:` $source_bundle `,` `[` $dests `]` `:` $dest_bundle `)` attr-dict
+  }];
+
+}
+
 def AIE_FlowOp: AIE_Op<"flow", []> {
   let arguments = (
     ins Index:$source,
@@ -1706,7 +1765,8 @@ def AIE_ObjectFifoCreateOp: AIE_Op<"objectfifo", [HasParent<"DeviceOp">, Symbol]
         // repeat_count==1 means "do it once"
         OptionalAttr<ConfinedAttr<AIEI32Attr, [IntMinValue<1>]>>:$repeat_count,
         InitValuesArrayAttr:$initValues,
-        OptionalAttr<BDPadLayoutArrayAttr>:$padDimensions
+        OptionalAttr<BDPadLayoutArrayAttr>:$padDimensions,
+        OptionalAttr<IntArray3DAttr>:$hop_tile_ids
   );
 
   let assemblyFormat = [{
