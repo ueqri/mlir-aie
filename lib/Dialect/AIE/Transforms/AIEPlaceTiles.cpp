@@ -68,8 +68,14 @@ struct AIEPlaceTilesPass : public AIEPlaceTilesBase<AIEPlaceTilesPass> {
         fifoOp.setVia_DMAAttr(builder.getBoolAttr(true));
       }
       else if (route_info["connection_type"] == "neighbor_sharing") {
-        int shareDirection = route_info["share_direction"];
-        fifoOp.setViaSharedMemAttr(builder.getI32IntegerAttr(shareDirection));
+        SmallVector<Attribute> shareDirectionAttrs;
+        for (const auto &dir : route_info["share_directions"]) {
+          int shareDirection = dir.get<int>();
+          shareDirectionAttrs.push_back(builder.getIntegerAttr(
+              builder.getI32Type(), shareDirection));
+        }
+        fifoOp.setViaSharedMemAttr(ArrayAttr::get(fifoOp.getContext(), 
+            shareDirectionAttrs));
       }
     }
     LLVM_DEBUG(llvm::dbgs() << "FIFOs configured successfully.\n");

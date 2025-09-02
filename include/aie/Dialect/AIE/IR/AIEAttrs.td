@@ -207,7 +207,6 @@ def PacketInfoAttr : AttrDef<AIE_Dialect, "PacketInfo", []> {
 def InitValuesArrayAttr
   : OptionalAttr<TypedArrayAttrBase<ElementsAttr, "array of ElementsAttr">>;
 
-
 def IntArray1DAttr : ArrayOfAttr<AIE_Dialect, "IntArray1D", "int_array_1d", "mlir::IntegerAttr">;
 
 def IntArray2DAttr : ArrayOfAttr<AIE_Dialect, "IntArray2D", "int_array_2d", "xilinx::AIE::IntArray1DAttr">;
