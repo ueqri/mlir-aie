@@ -324,11 +324,18 @@ def parse_args(args=None):
         help="Kernel id in xclbin file",
     )
     parser.add_argument(
-        "--pnr-flow",
-        dest="pnr_flow",
+        "--use-pnr-routing",
+        dest="pnr_routing",
         default=False,
         action="store_true",
-        help="Enable PnR routing results to be sent back to AIE"
+        help="Enable routing using PnR solution"
+    )
+    parser.add_argument(
+        "--get-routing-summary",
+        dest="routing_summary",
+        default=False,
+        action="store_true",
+        help="Get routing info summary"
     )
     opts = parser.parse_args(args)
     return opts

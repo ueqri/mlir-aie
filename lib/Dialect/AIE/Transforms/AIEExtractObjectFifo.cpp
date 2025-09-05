@@ -1,11 +1,7 @@
 #include "aie/Dialect/AIE/IR/AIEDialect.h"
 #include "aie/Dialect/AIE/Transforms/AIEPasses.h"
+#include <fstream>
 #include "json.hpp"
-
-#include "llvm/Support/FileSystem.h"
-#include "llvm/Support/raw_ostream.h"
-#include "llvm/Support/MemoryBuffer.h"
-#include "llvm/Support/ErrorOr.h"
 
 #define DEBUG_TYPE "aie-extract-fifo"
 
@@ -19,13 +15,6 @@ struct AIEExtractObjectFifoPass
   void runOnOperation() override {
     DeviceOp device = getOperation();
     int id = 0;
-
-    std::error_code ec;
-    llvm::raw_fd_ostream nFile("netlist.json", ec, llvm::sys::fs::OF_Text);
-    if (ec) {
-      llvm::errs() << "Could not open netlist.json: " << ec.message() << "\n";
-      return;
-    }
 
     json output;
     output["nodes"] = json::array();
@@ -112,7 +101,14 @@ struct AIEExtractObjectFifoPass
       output["links"].push_back(link);
     }
 
-    nFile << output.dump(2);
+    // write json to file
+    std::ofstream outFile("netlist.json");
+    if (!outFile.is_open()) {
+        llvm::errs() << "Could not open netlist.json for writing\n";
+        return;
+    }
+    outFile << output.dump(2);
+    outFile.close();
   }
 };
 
