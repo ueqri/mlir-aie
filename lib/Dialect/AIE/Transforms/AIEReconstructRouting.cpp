@@ -30,13 +30,6 @@ typedef struct Path {
   Path(TileOp src) : srcTile(src) {}
 } Path;
 
-using Connection = std::pair<std::pair<int,int>, std::pair<int,int>>;
-struct ConnectionComparator {
-    bool operator()(const Connection &a, const Connection &b) const {
-        return a < b;
-    }
-};
-
 class ConnectivityAnalysis {
   DeviceOp &device;
 public:
@@ -231,30 +224,40 @@ struct AIEReconstructRoutingPass :
       }
     }
 
-    std::set<Connection, ConnectionComparator> sharedMemConnect;
+    //std::set<Connection, ConnectionComparator> sharedMemConnect;
+    std::map<std::pair<TileOp, TileOp>, int> sharedMemConnect;
     for (auto coreOp : device.getOps<CoreOp>()) {
       auto coreTileOp = coreOp.getTileOp();
       
       coreOp.walk([&](UseLockOp useLockOp) {
         auto lock = useLockOp.getLockOp();
         auto lockTileOp = lock.getTileOp();
+        bool isProd = lock.hasName() && lock.name().getValue().contains("prod");
 
-        if (coreTileOp != lockTileOp) {
-          // lock is on different tile, used shared memory connection
-          std::pair<int,int> p1 = {coreTileOp.getCol(), coreTileOp.getRow()};
-          std::pair<int,int> p2 = {lockTileOp.getCol(), lockTileOp.getRow()};
+        if (coreTileOp != lockTileOp && useLockOp.release()) {
+          // Determine connection direction depending on if it's producer lock
+          std::pair<TileOp, TileOp> edge = isProd ? std::make_pair(lockTileOp, coreTileOp)
+                                                  : std::make_pair(coreTileOp, lockTileOp);
+          int shareDir = isProd ? -1 : 1;
 
-          // normalize: smaller first
-          if (p2 < p1) std::swap(p1, p2);
-          sharedMemConnect.insert({p1, p2});
+          // Check if overwriting existing entry
+          if (sharedMemConnect.count(edge)) {
+            llvm::errs() << "Overwriting shared mem connection between ("
+                        << edge.first.getCol() << "," << edge.first.getRow() << ") and ("
+                        << edge.second.getCol() << "," << edge.second.getRow() << ")\n";
+          }
+
+          sharedMemConnect[edge] = shareDir;
         }
       });
     }
 
-    for (auto &[p1, p2] : sharedMemConnect) {
+    for (auto &[tiles, shareDir] : sharedMemConnect) {
+      auto [srcTile, dstTile] = tiles;
       json connJson = {
-        {"src", {{"col_x", p1.first}, {"row_y", p1.second}}},
-        {"dst", {{"col_x", p2.first}, {"row_y", p2.second}}}
+        {"src", {{"col_x", srcTile.getCol()}, {"row_y", srcTile.getRow()}}},
+        {"dst", {{"col_x", dstTile.getCol()}, {"row_y", dstTile.getRow()}}},
+        {"share_direction", shareDir}
       };
       output["nbr_routes"].push_back(connJson);
     }
