@@ -123,7 +123,7 @@ struct AIEObjectFifoToPathPass : public AIEObjectFifoToPathBase<AIEObjectFifoToP
   DenseMap<ObjectFifoCreateOp, std::vector<ExternalBufferOp>>
       externalBuffersPerFifo; // maps each objFifo to its corresponding
   // external buffers
-  DenseMap<ObjectFifoCreateOp, std::vector<LockOp>>
+  DenseMap<ObjectFifoCreateOp, std::vector<std::vector<LockOp>>>
       locksPerFifo; // maps each objFifo to its corresponding locks
   std::vector<std::pair<ObjectFifoCreateOp, std::vector<ObjectFifoCreateOp>>>
       splitDmaFifos; // maps each objFifo between non-adjacent tiles to its
@@ -133,7 +133,6 @@ struct AIEObjectFifoToPathPass : public AIEObjectFifoToPathBase<AIEObjectFifoToP
   DenseMap<ObjectFifoLinkOp, ObjectFifoCreateOp>
       objFifoLinks; // maps each ObjectFifoLinkOp to objFifo whose elements
   // have been created and should be used
-  std::set<ObjectFifoCreateOp> onlyConsNbrFifos;
   std::vector<ObjectFifoCreateOp> originalFifoOps; // list of original
   // ObjectFifoCreateOps in the device
   
@@ -205,15 +204,15 @@ struct AIEObjectFifoToPathPass : public AIEObjectFifoToPathBase<AIEObjectFifoToP
 
   /// Function used to create objectFifo locks 
   /// Called by createObjectFifoElements().
-  std::vector<LockOp> createObjectFifoLocks(OpBuilder &builder,
+  std::vector<std::vector<LockOp>> createObjectFifoLocks(OpBuilder &builder,
                                             LockAnalysis &lockAnalysis,
                                             ObjectFifoCreateOp op, int numElem,
                                             int joinDistribFactor,
                                             TileOp creation_tile,
                                             int repeatCount) {
-    std::vector<LockOp> locks;
+    std::vector<std::vector<LockOp>> allLocks;
     if (op.getDisableSynchronization())
-      return locks;
+      return allLocks;
     // if shimTile external buffers are collected from input code
     // create as many locks as there are external buffers
     if (creation_tile.isShimTile()) {
@@ -221,36 +220,45 @@ struct AIEObjectFifoToPathPass : public AIEObjectFifoToPathBase<AIEObjectFifoToP
       if (!externalBuffersPerFifo[op].empty())
         numElem = externalBuffersPerFifo[op].size();
     }
-    
+    int numConsumers = 1;
+    if (op.getViaSharedMem().has_value())
+      numConsumers = op.getConsumerTiles().size();
     // create corresponding aie2 locks
-    for (int i = 0; i < joinDistribFactor; i++) {
-      auto initValues = op.getInitValues().has_value()
-                            ? op.getInitValues().value().size()
-                            : 0;
-      int prodLockID = lockAnalysis.getLockID(creation_tile);
-      assert(prodLockID >= 0 && "No more locks to allocate!");
-      int prodLockValue = (numElem - initValues) * repeatCount;
-      auto prodLock = builder.create<LockOp>(
-          builder.getUnknownLoc(), creation_tile, prodLockID, prodLockValue);
-      prodLock.getOperation()->setAttr(
-          SymbolTable::getSymbolAttrName(),
-          builder.getStringAttr(op.name().str() + "_prod_lock_" +
-                                std::to_string(i)));
-      locks.push_back(prodLock);
+    for (int c = 0; c < numConsumers; c++) {
+      std::vector<LockOp> locks;
+      std::string consSuffix = "";
+      if (numConsumers > 1)
+        consSuffix = "_nbr_src_" + std::to_string(c);
+      for (int i = 0; i < joinDistribFactor; i++) {
+        auto initValues = op.getInitValues().has_value()
+                              ? op.getInitValues().value().size()
+                              : 0;
+        int prodLockID = lockAnalysis.getLockID(creation_tile);
+        assert(prodLockID >= 0 && "No more locks to allocate!");
+        int prodLockValue = (numElem - initValues) * repeatCount;
+        auto prodLock = builder.create<LockOp>(
+            builder.getUnknownLoc(), creation_tile, prodLockID, prodLockValue);
+        prodLock.getOperation()->setAttr(
+            SymbolTable::getSymbolAttrName(),
+            builder.getStringAttr(op.name().str() + consSuffix + 
+                                  "_prod_lock_" + std::to_string(i)));
+        locks.push_back(prodLock);
 
-      int consLockID = lockAnalysis.getLockID(creation_tile);
-      assert(consLockID >= 0 && "No more locks to allocate!");
-      int consLockValue = initValues * repeatCount;
-      auto consLock = builder.create<LockOp>(
-          builder.getUnknownLoc(), creation_tile, consLockID, consLockValue);
-      consLock.getOperation()->setAttr(
-          SymbolTable::getSymbolAttrName(),
-          builder.getStringAttr(op.name().str() + "_cons_lock_" +
-                                std::to_string(i)));
-      locks.push_back(consLock);
+        int consLockID = lockAnalysis.getLockID(creation_tile);
+        assert(consLockID >= 0 && "No more locks to allocate!");
+        int consLockValue = initValues * repeatCount;
+        auto consLock = builder.create<LockOp>(
+            builder.getUnknownLoc(), creation_tile, consLockID, consLockValue);
+        consLock.getOperation()->setAttr(
+            SymbolTable::getSymbolAttrName(),
+            builder.getStringAttr(op.name().str() + consSuffix +
+                                  "_cons_lock_" + std::to_string(i)));
+        locks.push_back(consLock);
+      }
+      allLocks.push_back(locks);
     }
-    
-    return locks;
+
+    return allLocks;
   }
 
   /// Function used to create objectFifo elements and their locks.
@@ -366,7 +374,7 @@ struct AIEObjectFifoToPathPass : public AIEObjectFifoToPathBase<AIEObjectFifoToP
         joinDistribFactor *= linkOp->getFifoIns().size();
       objFifoLinks[*linkOp] = op;
     }
-    std::vector<LockOp> locks = createObjectFifoLocks(
+    std::vector<std::vector<LockOp>> locks = createObjectFifoLocks(
         builder, lockAnalysis, op, numElem, joinDistribFactor, creation_tile, repeatCount);
     buffersPerFifo[op] = buffers;
     locksPerFifo[op] = locks;
@@ -421,14 +429,14 @@ struct AIEObjectFifoToPathPass : public AIEObjectFifoToPathBase<AIEObjectFifoToP
     int acqMode = 1;
     int relMode = 1;
     auto acqLockAction = LockAction::Acquire;
-    if (locksPerFifo[op].size() > 0) {
+    if (locksPerFifo[op][0].size() > 0) {
       auto dev = op->getParentOfType<DeviceOp>();
       if (auto &target = dev.getTargetModel();
           target.getTargetArch() == AIEArch::AIE1) {
         acqMode = lockMode == 0 ? 1 : 0;
         relMode = lockMode == 0 ? 0 : 1;
-        acqLock = locksPerFifo[op][lockIndex];
-        relLock = locksPerFifo[op][lockIndex];
+        acqLock = locksPerFifo[op][0][lockIndex];
+        relLock = locksPerFifo[op][0][lockIndex];
       } else {
         acqMode = acqNum;
         relMode = relNum;
@@ -440,11 +448,11 @@ struct AIEObjectFifoToPathPass : public AIEObjectFifoToPathBase<AIEObjectFifoToP
           consLockIndex = lockIndex * 2 + 1;
         }
         acqLock = channelDir == DMAChannelDir::S2MM
-                      ? locksPerFifo[op][prodLockIndex]
-                      : locksPerFifo[op][consLockIndex];
+                      ? locksPerFifo[op][0][prodLockIndex]
+                      : locksPerFifo[op][0][consLockIndex];
         relLock = channelDir == DMAChannelDir::S2MM
-                      ? locksPerFifo[op][consLockIndex]
-                      : locksPerFifo[op][prodLockIndex];
+                      ? locksPerFifo[op][0][consLockIndex]
+                      : locksPerFifo[op][0][prodLockIndex];
       }
     }
     createBd(builder, acqLock, acqMode, acqLockAction, relLock, relMode, buff,
@@ -948,8 +956,8 @@ struct AIEObjectFifoToPathPass : public AIEObjectFifoToPathBase<AIEObjectFifoToP
   /// acquire (or release). Uses op to find index of acc for next lockID.
   /// Updates acc.
   void createUseLocks(OpBuilder &builder, ObjectFifoCreateOp op,
-                      ObjectFifoPort port,
-                      DenseMap<std::pair<ObjectFifoCreateOp, int>, int> &acc,
+                      int idx, ObjectFifoPort port,
+                      DenseMap<std::tuple<ObjectFifoCreateOp, int, int>, int> &acc,
                       int numLocks, LockAction lockAction) {
     ObjectFifoCreateOp target = op;
     auto portNum = port == ObjectFifoPort::Produce ? 0 : 1;
@@ -957,74 +965,46 @@ struct AIEObjectFifoToPathPass : public AIEObjectFifoToPathBase<AIEObjectFifoToP
       if (objFifoLinks.find(*linkOp) != objFifoLinks.end())
         target = objFifoLinks[*linkOp];
 
-    auto dev = op->getParentOfType<DeviceOp>();
-    if (!dev.getTargetModel().hasProperty(AIETargetModel::UsesSemaphoreLocks)) {
+    if (numLocks == 0)
+      return;
 
-      if (locksPerFifo[target].size() == 0) {
-        for (int i = 0; i < numLocks; i++) {
-          int lockID = acc[{op, portNum}];
-          acc[{op, portNum}] =
-              (lockID + 1) % op.size(); // update to next objFifo elem
-        }
-        return;
-      }
-
-      int lockMode = 0;
-      if ((port == ObjectFifoPort::Produce &&
-           lockAction == LockAction::Release) ||
-          (port == ObjectFifoPort::Consume &&
-           lockAction == LockAction::Acquire))
-        lockMode = 1;
-      for (int i = 0; i < numLocks; i++) {
-        int lockID = acc[{op, portNum}];
-        builder.create<UseLockOp>(builder.getUnknownLoc(),
-                                  locksPerFifo[target][lockID], lockAction,
-                                  lockMode);
-        acc[{op, portNum}] =
-            (lockID + 1) % op.size(); // update to next objFifo elem
-      }
-    } else {
-      if (numLocks == 0)
-        return;
-
-      if (locksPerFifo[target].size() == 0) {
-        acc[{op, portNum}] = (acc[{op, portNum}] + numLocks) %
-                             op.size(); // update to next objFifo elem
-        return;
-      }
-
-      // search for the correct lock based on the port of the acq/rel
-      // operation e.g. acq as consumer is the read lock (second)
-      LockOp lock;
-      if (lockAction == LockAction::AcquireGreaterEqual) {
-        if (port == ObjectFifoPort::Produce)
-          lock = locksPerFifo[target][0];
-        else
-          lock = locksPerFifo[target][1];
-      } else {
-        if (port == ObjectFifoPort::Produce)
-          lock = locksPerFifo[target][1];
-        else
-          lock = locksPerFifo[target][0];
-      }
-      builder.create<UseLockOp>(builder.getUnknownLoc(), lock, lockAction,
-                                numLocks);
-      acc[{op, portNum}] = (acc[{op, portNum}] + numLocks) %
-                           op.size(); // update to next objFifo elem
+    if (locksPerFifo[target][idx].size() == 0) {
+      acc[{op, idx, portNum}] = (acc[{op, idx, portNum}] + numLocks) %
+                            op.size(); // update to next objFifo elem
+      return;
     }
+
+    // search for the correct lock based on the port of the acq/rel
+    // operation e.g. acq as consumer is the read lock (second)
+    LockOp lock;
+    if (lockAction == LockAction::AcquireGreaterEqual) {
+      if (port == ObjectFifoPort::Produce)
+        lock = locksPerFifo[target][idx][0];
+      else
+        lock = locksPerFifo[target][idx][1];
+    } else {
+      if (port == ObjectFifoPort::Produce)
+        lock = locksPerFifo[target][idx][1];
+      else
+        lock = locksPerFifo[target][idx][0];
+    }
+    builder.create<UseLockOp>(builder.getUnknownLoc(), lock, lockAction,
+                              numLocks);
+    acc[{op, idx, portNum}] = (acc[{op, idx, portNum}] + numLocks) %
+                               op.size(); // update to next objFifo elem
   }
 
   /// Function used to check whether op is already contained in map.
   /// If it is then return the associated int, if not create new entry and
   /// return 0.
   int updateAndReturnIndex(
-      DenseMap<std::pair<ObjectFifoCreateOp, int>, int> &map,
-      std::pair<ObjectFifoCreateOp, int> pair) {
-    if (map.find(pair) == map.end()) {
-      map[pair] = 0;
+      DenseMap<std::tuple<ObjectFifoCreateOp, int, int>, int> &map,
+      std::tuple<ObjectFifoCreateOp, int, int> key) {
+    if (map.find(key) == map.end()) {
+      map[key] = 0;
       return 0;
     }
-    return map[pair];
+    return map[key];
   }
 
   /// Function used to add an external buffer to the externalBuffersPerFifo map.
@@ -1194,8 +1174,10 @@ struct AIEObjectFifoToPathPass : public AIEObjectFifoToPathBase<AIEObjectFifoToP
       // clone other ops in core that use acquire/subview 
       // results of FIFO
       coreOp.walk([&](Operation *op) {
-        if (isa<func::CallOp>(op) || isa<memref::StoreOp>(op)) {
-          bool isUser = llvm::any_of(op->getOperands(), [&](Value v){ 
+        if (isa<func::CallOp>(op) ||
+            op->getDialect()->getNamespace() == "memref" ||
+            op->getDialect()->getNamespace() == "arith") {
+          bool isUser = llvm::any_of(op->getOperands(), [&](Value v){
             return trackedValues.count(v);
           });
 
@@ -1211,12 +1193,45 @@ struct AIEObjectFifoToPathPass : public AIEObjectFifoToPathBase<AIEObjectFifoToP
           builder.setInsertionPointAfter(op);
           Operation* newOp = op->clone(mapping);
           builder.insert(newOp);
+
+          for (auto it : llvm::zip(op->getResults(), newOp->getResults())) {
+            trackedValues[std::get<0>(it)] = std::get<1>(it);
+          }
+
           opsToErase.insert(op);
         }
       });
     }
 
     return opsToErase;
+  }
+
+  SmallVector<int> getLockIndices(ObjectFifoCreateOp op, TileOp coreTile, TileOp fifoProdTile) {
+    SmallVector<int> lockIndices;
+    if (op.numSharedMemConsumers(-1) > 1) {
+      if (coreTile == fifoProdTile) {
+        // Producer core with mem-on-src for multiple consumers
+        // process all locks
+        for (size_t i = 0; i < op.getConsumerTiles().size(); i++)
+          lockIndices.push_back(static_cast<int>(i));
+      } 
+      else {
+        // Process on only matching consumer core
+        int i = 0;
+        for (auto cons : op.getConsumerTiles()) {
+          if (coreTile == cons.getDefiningOp<TileOp>()) {
+            lockIndices.push_back(i);
+            break;
+          }
+          i++;
+        }
+      }
+    }
+    else {
+      // one-to-one Fifo
+      lockIndices.push_back(0);
+    }
+    return lockIndices;  
   }
 
   void runOnOperation() override {
@@ -1267,13 +1282,17 @@ struct AIEObjectFifoToPathPass : public AIEObjectFifoToPathBase<AIEObjectFifoToP
         }
         llvm::outs() << "]\n";
       }
+      SmallVector<Value> memOnSrcConsumers;
       for (auto consumerTile : createOp.getConsumerTiles()) {
-        // Split only if consumer wants shared memory on itself
-        if (createOp.sharedMemValue(consumerIndex) == -1) {
-          consumerIndex++;
-          continue;
-        }
-          
+        if (createOp.getViaSharedMem().has_value() &&
+            createOp.sharedMemValue(consumerIndex) == -1) {
+            llvm::outs() << createOp << " " << consumerIndex 
+                << " wants to use mem-on-src\n";
+            memOnSrcConsumers.push_back(consumerTile);
+            consumerIndex++;
+            continue;
+          }
+        
         auto consumerTileOp = dyn_cast<TileOp>(consumerTile.getDefiningOp());
 
         builder.setInsertionPointAfter(createOp);
@@ -1281,7 +1300,7 @@ struct AIEObjectFifoToPathPass : public AIEObjectFifoToPathBase<AIEObjectFifoToP
         // Fifo creation parameters
         auto datatype = llvm::cast<AIEObjectFifoType>(createOp.getElemType());
         ArrayAttr viaSharedMem = nullptr;
-        std::string conSuffix = "_nbr_cons";
+        std::string conSuffix;
         int consumerDepth = createOp.size();
         std::string consumerFifoName;
 
@@ -1293,14 +1312,16 @@ struct AIEObjectFifoToPathPass : public AIEObjectFifoToPathBase<AIEObjectFifoToP
             consumerDepth = findObjectFifoSize(device, consumerTileOp, createOp);
           }
           conSuffix = "_cons";
-        }
-        else if (createOp.getViaSharedMem().has_value()) {
+        } else if (createOp.getViaSharedMem().has_value()) {
           // Share direction has to be on consumer -> 1
           llvm::outs() << createOp << " consumer " << consumerIndex << " wants to use mem-on-sink\n";
+          conSuffix = "_nbr_sink";
           consumerDepth = createOp.size();
           int shareDir = createOp.sharedMemValue(consumerIndex);
           IntegerAttr intAttr = builder.getI32IntegerAttr(shareDir);
           viaSharedMem = builder.getArrayAttr({intAttr});
+        } else {
+          llvm_unreachable("Neither via_DMA nor shared_mem set for fifo.");
         }
 
         auto consumerObjFifoSize =
@@ -1355,6 +1376,17 @@ struct AIEObjectFifoToPathPass : public AIEObjectFifoToPathBase<AIEObjectFifoToP
         consumerIndex++;
       }
 
+      
+      createOp.getConsumerTilesMutable().assign(memOnSrcConsumers);
+
+      // Error check
+      if (createOp.numSharedMemConsumers(-1) != 
+          (int)createOp.getConsumerTiles().size())
+        createOp.emitOpError("No. of mem-on-src consumers ") 
+                              << createOp.numSharedMemConsumers(-1)
+                              << " should match no. of consumers "
+                              << createOp.getConsumerTiles().size();
+
       if (!splitConsumerFifos.empty()) {
         if (createOp.getViaSharedMem().has_value())
           splitNbrFifos.emplace_back(createOp, splitConsumerFifos);
@@ -1364,7 +1396,6 @@ struct AIEObjectFifoToPathPass : public AIEObjectFifoToPathBase<AIEObjectFifoToP
     }
     llvm::outs() << "Finished splitting Fifos\n";
     llvm::outs() << "splitnbrsize: " << splitNbrFifos.size() << "\n";
-
     //===------------------------------------------------------------------===//
     // - Handle multicast using shared memory connection.
     // - Duplicate FIFO usage in Producer core if shared memory is intended on
@@ -1384,7 +1415,7 @@ struct AIEObjectFifoToPathPass : public AIEObjectFifoToPathBase<AIEObjectFifoToP
           }
 
           // if all consumer tiles use buffer-on-cons, mark removal for prod side
-          if (prodFifo.getConsumerTiles().size() == splitConsFifos.size()) {
+          if (prodFifo.getConsumerTiles().size() == 0) {
             llvm::outs() << "Removing source side for " << prodFifo << "\n";
             opsToErase.insert(prodFifo);
             nbrOpsToErase.insert(opsToErase.begin(), opsToErase.end());
@@ -1392,18 +1423,18 @@ struct AIEObjectFifoToPathPass : public AIEObjectFifoToPathBase<AIEObjectFifoToP
 
           //debug
           llvm::outs() << "Showing core after clone for " << prodFifo << "\n";
-          coreOp.dump();
+          device.dump();
         }
       }
     }
-    
+    llvm::outs() << "\neraseSet size: " << nbrOpsToErase.size() << "\n";
     // remove marked operations
     SmallVector<Operation*> nbrSorted{nbrOpsToErase.begin(), nbrOpsToErase.end()};
     computeTopologicalSorting(nbrSorted);
     for (auto *op : llvm::reverse(nbrSorted))
         op->erase();
     llvm::outs() << "Finished removing prod-side fifo\n";
-    return;
+    device.dump();
     //===------------------------------------------------------------------===//
     // - Create objectFifo buffers and locks.
     // - Populate a list of tiles containing objectFifos for later processing of
@@ -1428,8 +1459,8 @@ struct AIEObjectFifoToPathPass : public AIEObjectFifoToPathBase<AIEObjectFifoToP
       // if use shared_memory, PnR decides if buffer will be on producer or
       // consumer side
       if (createOp.getViaSharedMem().has_value()) {
-        if (createOp.getViaSharedMem().value().size() > 1) {
-          createObjectFifoElements(builder, lockAnalysis, createOp, 0);
+        if (createOp.numSharedMemConsumers(-1) > 1) {
+          createObjectFifoElements(builder, lockAnalysis, createOp, -1);
         }
         else
           createObjectFifoElements(builder, lockAnalysis, createOp,
@@ -1529,7 +1560,7 @@ struct AIEObjectFifoToPathPass : public AIEObjectFifoToPathBase<AIEObjectFifoToP
                                         createOp.getViaSharedMem().value());
       }
     }
-
+    llvm::outs() << "Created neighbour paths\n";
     //===------------------------------------------------------------------===//
     // Statically unroll for loops 
     //===------------------------------------------------------------------===//
@@ -1541,7 +1572,7 @@ struct AIEObjectFifoToPathPass : public AIEObjectFifoToPathBase<AIEObjectFifoToP
     }
     if (failed(unrollForLoops(device, builder, unrollTiles)))
       signalPassFailure();
-    LLVM_DEBUG(llvm::dbgs() << "Unrolled loops\n");
+    llvm::outs() << "Unrolled loops\n";
     //===------------------------------------------------------------------===//
     // Replace ops
     //===------------------------------------------------------------------===//
@@ -1549,18 +1580,18 @@ struct AIEObjectFifoToPathPass : public AIEObjectFifoToPathBase<AIEObjectFifoToP
       DenseMap<ObjectFifoAcquireOp, std::vector<BufferOp *>>
           subviews; // maps each "subview" to its buffer references (subviews
       // are created by AcquireOps)
-      DenseMap<std::pair<ObjectFifoCreateOp, int>, std::vector<int>>
+      DenseMap<std::tuple<ObjectFifoCreateOp, int, int>, std::vector<int>>
           acquiresPerFifo; // maps each objFifo to indices of buffers acquired
       // in latest subview of that objFifo (useful to
       // cascade acquired elements to next AcquireOp)
-      DenseMap<std::pair<ObjectFifoCreateOp, int>,
+      DenseMap<std::tuple<ObjectFifoCreateOp, int, int>,
                std::vector<ObjectFifoReleaseOp>>
           releaseOps; // useful to check which ReleaseOp has taken place before
       // an AcquireOp per objFifo
-      DenseMap<std::pair<ObjectFifoCreateOp, int>, int>
+      DenseMap<std::tuple<ObjectFifoCreateOp, int, int>, int>
           acqPerFifo; // maps each objFifo to its next index to acquire within
       // this CoreOp
-      DenseMap<std::pair<ObjectFifoCreateOp, int>, int>
+      DenseMap<std::tuple<ObjectFifoCreateOp, int, int>, int>
           relPerFifo; // maps each objFifo to its next index to release within
       // this CoreOp
 
@@ -1570,6 +1601,7 @@ struct AIEObjectFifoToPathPass : public AIEObjectFifoToPathBase<AIEObjectFifoToP
       coreOp.walk([&](ObjectFifoReleaseOp releaseOp) {
         builder.setInsertionPointAfter(releaseOp);
         ObjectFifoCreateOp op = releaseOp.getObjectFifo();
+        auto fifoProdTile = op.getProducerTileOp();
         auto port = releaseOp.getPort();
         auto portNum = port == ObjectFifoPort::Produce ? 0 : 1;
         auto core = releaseOp->getParentOfType<CoreOp>();
@@ -1582,23 +1614,26 @@ struct AIEObjectFifoToPathPass : public AIEObjectFifoToPathBase<AIEObjectFifoToP
           }
         }
 
-        // update index of next element to release for this objectFifo
-        updateAndReturnIndex(relPerFifo, {op, portNum});
+        SmallVector<int> lockIndices = getLockIndices(op, core.getTileOp(), fifoProdTile);
+        for (auto idx : lockIndices) {
+          // update index of next element to release for this objectFifo
+          updateAndReturnIndex(relPerFifo, {op, idx, portNum});
 
-        // release locks
-        int numLocks = releaseOp.relNumber();
-        // account for repetition
-        if (op.getRepeatCount().has_value())
-          numLocks *= op.getRepeatCount().value();
-        createUseLocks(builder, op, port, relPerFifo, numLocks,
-                       LockAction::Release);
+          // release locks
+          int numLocks = releaseOp.relNumber();
+          // account for repetition
+          if (op.getRepeatCount().has_value())
+            numLocks *= op.getRepeatCount().value();
+          createUseLocks(builder, op, idx, port, relPerFifo, numLocks,
+                        LockAction::Release);
 
-        // register release op
-        if (releaseOps.find({op, portNum}) != releaseOps.end()) {
-          releaseOps[{op, portNum}].push_back(releaseOp);
-        } else {
-          std::vector release = {releaseOp};
-          releaseOps[{op, portNum}] = release;
+          // register release op
+          if (releaseOps.find({op, idx, portNum}) != releaseOps.end()) {
+            releaseOps[{op, idx, portNum}].push_back(releaseOp);
+          } else {
+            std::vector release = {releaseOp};
+            releaseOps[{op, idx, portNum}] = release;
+          }
         }
       });
 
@@ -1607,6 +1642,7 @@ struct AIEObjectFifoToPathPass : public AIEObjectFifoToPathBase<AIEObjectFifoToP
       //===----------------------------------------------------------------===//
       coreOp.walk([&](ObjectFifoAcquireOp acquireOp) {
         ObjectFifoCreateOp op = acquireOp.getObjectFifo();
+        auto fifoProdTile = op.getProducerTileOp();
         builder.setInsertionPointAfter(acquireOp);
         auto port = acquireOp.getPort();
         auto portNum = port == ObjectFifoPort::Produce ? 0 : 1;
@@ -1621,98 +1657,101 @@ struct AIEObjectFifoToPathPass : public AIEObjectFifoToPathBase<AIEObjectFifoToP
           }
         }
 
-        // index of next element to acquire for this objectFifo
-        int start = updateAndReturnIndex(
-            acqPerFifo, {op, portNum}); // useful for keeping track of which
-        // indices are acquired
+        SmallVector<int> lockIndices = getLockIndices(op, core.getTileOp(), fifoProdTile);
+        bool makeBuffers = true;
+        for (auto idx : lockIndices) {
+          // index of next element to acquire for this objectFifo
+          int start = updateAndReturnIndex(
+              acqPerFifo, {op, idx, portNum}); // useful for keeping track of which
+          // indices are acquired
 
-        // check how many elements have been released in between this AcquireOp
-        // and the previous one
-        // !!! operations may not be in the same block !!!
-        int numRel = 0;
-        for (std::vector<ObjectFifoReleaseOp>::iterator relOp =
-                 releaseOps[{op, portNum}].begin();
-             relOp != releaseOps[{op, portNum}].end();) {
-          bool erased = false;
-          Operation *acqBlockDefOp = acquireOp.getOperation();
-          do {
-            Operation *relBlockDefOp = (*relOp).getOperation();
+          // check how many elements have been released in between this AcquireOp
+          // and the previous one
+          // !!! operations may not be in the same block !!!
+          int numRel = 0;
+          for (std::vector<ObjectFifoReleaseOp>::iterator relOp =
+                  releaseOps[{op, idx, portNum}].begin();
+              relOp != releaseOps[{op, idx,portNum}].end();) {
+            bool erased = false;
+            Operation *acqBlockDefOp = acquireOp.getOperation();
             do {
-              if (acqBlockDefOp->getBlock() == relBlockDefOp->getBlock()) {
-                if (relBlockDefOp->isBeforeInBlock(acqBlockDefOp)) {
-                  numRel += (*relOp).relNumber();
-                  relOp = releaseOps[{op, portNum}].erase(relOp);
-                  // to ensure that we do not account
-                  // the ReleaseOps again later,
-                  // after the subview is created
-                  erased = true;
+              Operation *relBlockDefOp = (*relOp).getOperation();
+              do {
+                if (acqBlockDefOp->getBlock() == relBlockDefOp->getBlock()) {
+                  if (relBlockDefOp->isBeforeInBlock(acqBlockDefOp)) {
+                    numRel += (*relOp).relNumber();
+                    relOp = releaseOps[{op, idx, portNum}].erase(relOp);
+                    // to ensure that we do not account
+                    // the ReleaseOps again later,
+                    // after the subview is created
+                    erased = true;
+                  }
                 }
-              }
-            } while ((relBlockDefOp = relBlockDefOp->getParentOp()) &&
-                     !isa<DeviceOp>(relBlockDefOp) && !erased);
-          } while ((acqBlockDefOp = acqBlockDefOp->getParentOp()) &&
-                   !isa<DeviceOp>(acqBlockDefOp) && !erased);
-          if (!erased)
-            ++relOp;
-        }
-
-        // track indices of elements to acquire
-        std::vector<int> acquiredIndices;
-        if (!acquiresPerFifo[{op, portNum}].empty()) {
-          // take into account what has already been acquired by previous
-          // AcquireOp in program order
-          acquiredIndices = acquiresPerFifo[{op, portNum}];
-          // take into account what has been released in-between
-          if (static_cast<size_t>(numRel) > acquiredIndices.size()) {
-            acquireOp->emitOpError("cannot release more elements than are "
-                                   "already acquired");
-            return;
+              } while ((relBlockDefOp = relBlockDefOp->getParentOp()) &&
+                      !isa<DeviceOp>(relBlockDefOp) && !erased);
+            } while ((acqBlockDefOp = acqBlockDefOp->getParentOp()) &&
+                    !isa<DeviceOp>(acqBlockDefOp) && !erased);
+            if (!erased)
+              ++relOp;
           }
-          for (int i = 0; i < numRel; i++)
-            acquiredIndices.erase(acquiredIndices.begin());
+
+          // track indices of elements to acquire
+          std::vector<int> acquiredIndices;
+          if (!acquiresPerFifo[{op, idx, portNum}].empty()) {
+            // take into account what has already been acquired by previous
+            // AcquireOp in program order
+            acquiredIndices = acquiresPerFifo[{op, idx, portNum}];
+            // take into account what has been released in-between
+            if (static_cast<size_t>(numRel) > acquiredIndices.size()) {
+              acquireOp->emitOpError("cannot release more elements than are "
+                                    "already acquired");
+              return;
+            }
+            for (int i = 0; i < numRel; i++)
+              acquiredIndices.erase(acquiredIndices.begin());
+          }
+
+          // acquire locks
+          int numLocks = acquireOp.acqNumber();
+          int alreadyAcq = acquiredIndices.size();
+          int numCreate;
+          if (numLocks > alreadyAcq)
+            numCreate = numLocks - alreadyAcq;
+          else
+            numCreate = 0;
+
+          // account for repetition
+          if (op.getRepeatCount().has_value())
+            numCreate *= op.getRepeatCount().value();
+
+          createUseLocks(builder, op, idx, port, acqPerFifo, numCreate,
+                          LockAction::AcquireGreaterEqual);
+
+          // if objFifo was linked with others, find which objFifos
+          // elements to use
+          ObjectFifoCreateOp target = op;
+          if (linkOp)
+            if (objFifoLinks.find(*linkOp) != objFifoLinks.end())
+              target = objFifoLinks[*linkOp];
+          
+          if (makeBuffers) {
+            // create subview: buffers that were already acquired + new acquires
+            for (int i = 0; i < numCreate; i++) {
+              acquiredIndices.push_back(start);
+              start = (start + 1) % op.size();
+            }
+            std::vector<BufferOp *> subviewRefs;
+            subviewRefs.reserve(acquiredIndices.size());
+            for (auto index : acquiredIndices)
+              subviewRefs.push_back(&buffersPerFifo[target][index]);
+
+            subviews[acquireOp] = subviewRefs;
+
+            makeBuffers = false; // only need to make buffers once
+          }
+          
+          acquiresPerFifo[{op, idx, portNum}] = acquiredIndices;
         }
-
-        // acquire locks
-        int numLocks = acquireOp.acqNumber();
-        int alreadyAcq = acquiredIndices.size();
-        int numCreate;
-        if (numLocks > alreadyAcq)
-          numCreate = numLocks - alreadyAcq;
-        else
-          numCreate = 0;
-
-        // account for repetition
-        if (op.getRepeatCount().has_value())
-          numCreate *= op.getRepeatCount().value();
-
-        auto dev = op->getParentOfType<DeviceOp>();
-        if (auto &targetArch = dev.getTargetModel();
-            targetArch.getTargetArch() == AIEArch::AIE1)
-          createUseLocks(builder, op, port, acqPerFifo, numCreate,
-                         LockAction::Acquire);
-        else
-          createUseLocks(builder, op, port, acqPerFifo, numCreate,
-                         LockAction::AcquireGreaterEqual);
-
-        // if objFifo was linked with others, find which objFifos
-        // elements to use
-        ObjectFifoCreateOp target = op;
-        if (linkOp)
-          if (objFifoLinks.find(*linkOp) != objFifoLinks.end())
-            target = objFifoLinks[*linkOp];
-
-        // create subview: buffers that were already acquired + new acquires
-        for (int i = 0; i < numCreate; i++) {
-          acquiredIndices.push_back(start);
-          start = (start + 1) % op.size();
-        }
-        std::vector<BufferOp *> subviewRefs;
-        subviewRefs.reserve(acquiredIndices.size());
-        for (auto index : acquiredIndices)
-          subviewRefs.push_back(&buffersPerFifo[target][index]);
-
-        subviews[acquireOp] = subviewRefs;
-        acquiresPerFifo[{op, portNum}] = acquiredIndices;
       });
 
       //===----------------------------------------------------------------===//

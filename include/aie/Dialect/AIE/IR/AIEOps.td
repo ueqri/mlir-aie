@@ -1807,6 +1807,18 @@ def AIE_ObjectFifoCreateOp: AIE_Op<"objectfifo", [HasParent<"DeviceOp">, Symbol]
             .getInt();
       return -2;
     }
+
+    int numSharedMemConsumers(int shareDirection) {
+      int count = 0;
+      if (!getViaSharedMem()) return count;
+      auto arrayAttr = getViaSharedMem().value();
+      for (auto attr : arrayAttr) {
+        if (llvm::dyn_cast<mlir::IntegerAttr>(attr).getInt() == shareDirection)
+          count++;
+      }
+      return count;
+    }
+
   }];
 
   let builders = [
