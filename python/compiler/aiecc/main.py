@@ -1121,7 +1121,7 @@ class FlowRunner:
             else:
                 progress_bar.task = None
 
-            if opts.pnr_flow:
+            if opts.pnr_routing:
                 pass_pipeline = PNR_INPUT_WITH_ADDRESSES_PIPELINE(
                     opts.alloc_scheme, opts.ctrl_pkt_overlay
                 ).materialize(module=True)
@@ -1222,6 +1222,17 @@ class FlowRunner:
                 )
             ]
             await asyncio.gather(*processes)
+
+            if opts.routing_summary:
+                await self.do_call(
+                    None,
+                    [
+                        "aie-opt",
+                        "--aie-reconstruct-routing",
+                        input_physical,
+                    ],
+                    force=True,
+                )
 
             if opts.compile_host or opts.aiesim:
                 file_inc_cpp = self.prepend_tmp("aie_inc.cpp")

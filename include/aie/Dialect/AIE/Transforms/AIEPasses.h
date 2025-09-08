@@ -44,6 +44,8 @@ createAIEObjectFifoToPathPass();
 std::unique_ptr<mlir::OperationPass<DeviceOp>>
 createAIEPathToRoutingPass();
 std::unique_ptr<mlir::OperationPass<DeviceOp>>
+createAIEReconstructRoutingPass();
+std::unique_ptr<mlir::OperationPass<DeviceOp>>
 createAIEObjectFifoStatefulTransformPass();
 std::unique_ptr<mlir::OperationPass<DeviceOp>>
 createAIEObjectFifoRegisterProcessPass();

@@ -223,6 +223,19 @@ def AIEPathToRouting : Pass<"aie-path-to-routing", "DeviceOp"> {
   ];
 }
 
+def AIEReconstructRouting : Pass<"aie-reconstruct-routing", "DeviceOp"> {
+  let summary = "Diagnostic pass for extracting routing information";
+  let description = [{
+    This pass analyzes the routing information of the device and extracts
+    relevant details for performance modelling.
+  }];
+
+  let constructor = "xilinx::AIE::createAIEReconstructRoutingPass()";
+  let dependentDialects = [
+    "xilinx::AIE::AIEDialect",
+  ];
+}
+
 def AIEObjectFifoStatefulTransform : Pass<"aie-objectFifo-stateful-transform", "DeviceOp"> {
   let summary = "Instantiate the buffers and locks of aie.objectFifo.createObjectFifo operations";
   let description = [{
