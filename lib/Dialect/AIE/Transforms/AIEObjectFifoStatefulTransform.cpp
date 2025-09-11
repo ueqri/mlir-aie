@@ -274,7 +274,7 @@ struct AIEObjectFifoStatefulTransformPass
   void checkAndApplyViaSharedMemAttribute(ObjectFifoCreateOp createOp,
                                           int &share_direction) {
     if (createOp.getViaSharedMem().has_value()) {
-      int desiredSharedTile = createOp.getViaSharedMem().value();
+      int desiredSharedTile = createOp.sharedMemValue();
       int desiredSharedModule = 1;
       if (desiredSharedTile == 0)
         desiredSharedModule = -1;
