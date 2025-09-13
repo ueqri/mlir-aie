@@ -417,6 +417,8 @@ class object_fifo(ObjectFifoCreateOp):
         plio=None,
         padDimensions=None,
         disable_synchronization=None,
+        hop_tiles_ids=None,
+        via_shared_mem=None,
     ):
         self.datatype = try_convert_np_type_to_mlir_type(datatype)
         if not isinstance(consumerTiles, List):
@@ -447,6 +449,8 @@ class object_fifo(ObjectFifoCreateOp):
             padDimensions=padDimensions,
             disable_synchronization=disable_synchronization,
             initValues=initValues,
+            hop_tile_ids=hop_tiles_ids,
+            via_shared_mem=via_shared_mem,
         )
 
     def acquire(self, port, num_elem):

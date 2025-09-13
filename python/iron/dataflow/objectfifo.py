@@ -76,6 +76,9 @@ class ObjectFifo(Resolvable):
         self._prod: ObjectFifoHandle | None = None
         self._cons: list[ObjectFifoHandle] = []
         self._resolving = False
+        self._via_dma: bool = False
+        self._hop_tile_ids: list[list[list[int]]] | None = None
+        self._via_shared_mem: list[int] | None = None
 
     @classmethod
     def __get_index(cls) -> int:
@@ -267,6 +270,9 @@ class ObjectFifo(Resolvable):
                 dimensionsToStream=self._dims_to_stream,
                 dimensionsFromStreamPerConsumer=dims_from_stream_per_cons,
                 plio=self._plio,
+                via_DMA=self._via_dma,
+                via_shared_mem=self._via_shared_mem,
+                hop_tile_ids=self._hop_tile_ids,
             )
 
             if isinstance(self._prod.endpoint, ObjectFifoLink):

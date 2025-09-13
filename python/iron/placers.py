@@ -8,6 +8,8 @@
 
 from abc import ABCMeta, abstractmethod
 import statistics
+import json
+import numpy as np
 
 from .device import Device
 from .runtime import Runtime, RuntimeEndpoint
@@ -41,9 +43,7 @@ class Placer(metaclass=ABCMeta):
 
 class NullPlacer(Placer):
     """
-    NullPlacer is a minimal placer that does not attempt
-    to optimize placement. It only allocates physical tiles
-    and keeps track of DMA channel usage.
+    TODO: Change placer name
     """
 
     def __init__(self):
@@ -54,234 +54,120 @@ class NullPlacer(Placer):
         device: Device,
         rt: Runtime,
         workers: list[Worker],
-        object_fifos: set[ObjectFifoHandle],
+        fifo_handles: list[ObjectFifoHandle],
     ):
-        comp_tiles: list[Tile] = []
-        shim_tiles: list[Tile] = []
-        mem_tiles: list[Tile] = []
 
-        channels_in: dict[Tile, int] = {}
-        channels_out: dict[Tile, int] = {}
+        data = {"nodes": [], "nets": [], "links": []}
 
-        # Place workers and update their channel usage
+        # Mapping between handles/FIFOs and IDs
+        fifo_handle_ids = {ofh: idx for idx, ofh in enumerate(fifo_handles)}
+        id_to_fifo_handle = {idx: ofh for idx, ofh in enumerate(fifo_handles)}
+
+        # Build nodes
+        for idx, ofh in enumerate(fifo_handles):
+            t_type, row_y = self.get_node_info(ofh.tile)
+            data["nodes"].append({"id": idx, "type": t_type, "col_x": -1, "row_y": row_y})
+        
+        # Get FIFO list
+        seen = set()
+        of_list = []
+        for ofh in fifo_handles:
+            fifo = ofh._object_fifo
+            if fifo not in seen:
+                seen.add(fifo)
+                of_list.append(fifo)
+
+        fifo_ids = {of: idx for idx, of in enumerate(of_list)}
+        id_to_fifo = {idx: of for idx, of in enumerate(of_list)}
+
+        # Build nets
+        for idx, of in enumerate(of_list):
+            src_node_id = fifo_handle_ids[of._prod]
+            dst_node_ids = [fifo_handle_ids[c] for c in of._cons]
+            depths = of._get_depths()
+            if not isinstance(depths, list):
+                depths = [depths]
+            bytes_per_depth = np.prod(of.shape) * of.dtype.itemsize
+
+            data["nets"].append({
+                "net_id": idx,
+                "net_name": of.name,
+                "src_id": src_node_id,
+                "dst_ids": dst_node_ids,
+                "depths": depths,
+                "byte_size_per_depth": bytes_per_depth
+            })
+
+        # Build links
+        link_set = set()
+        for of in of_list:
+            endpoints = of._get_endpoint(is_prod=True) + of._get_endpoint(is_prod=False)
+            for ep in endpoints:
+                if isinstance(ep, ObjectFifoLink):
+                    link_set.add(ep)
+        for link in link_set:
+            src_handles = link._srcs if isinstance(link._srcs, list) else [link._srcs]
+            dst_handles = link._dsts if isinstance(link._dsts, list) else [link._dsts]
+
+            src_net_ids = sorted({fifo_ids[h._object_fifo] for h in src_handles})
+            dst_net_ids = sorted({fifo_ids[h._object_fifo] for h in dst_handles})
+
+            data["links"].append({
+                "src_net_ids": src_net_ids,
+                "dst_net_ids": dst_net_ids
+            })
+
+        with open("netlist.json", "w") as f:
+            json.dump(data, f, indent=2)
+
+        # --- Run placer subprocess here ---
+        # subprocess.run([...], check=True)
+        breakpoint()
+
+        # Load placed netlist
+        with open("placed.json", "r") as f:
+            placed_data = json.load(f)
+
+        # Map coordinates to tiles
+        coord_to_tile: dict[tuple[int, int], Tile] = {}
+        for node in placed_data["nodes"]:
+            coord = (node["col_x"], node["row_y"])
+            t = coord_to_tile.get(coord)
+            if t is None:
+                t = Tile(*coord)
+                coord_to_tile[coord] = t
+            id_to_fifo_handle[node["id"]].endpoint.place(t)
+
+        # Apply net placements and routing info
+        for net in placed_data["nets"]:
+            of = id_to_fifo[net["net_id"]]
+            if net["net_name"] != of.name:
+                raise ValueError("Placed netlist does not match original netlist!")
+
+            routing = net["routing_info"]
+            if routing["connection_type"] == "circuit_switch":
+                of._via_dma = True
+                of._hop_tile_ids = routing["intermediates"]
+            elif routing["connection_type"] == "neighbor_sharing":
+                of._via_shared_mem = routing["share_directions"]
+            elif routing["connection_type"] == "intra_tile":
+                of._via_shared_mem = [-1]
+            else:
+                raise ValueError(f"Unknown connection type {routing['connection_type']}")
+        # Place buffers for workers
         for worker in workers:
-            if worker.tile == AnyComputeTile:
-                w_tile = Tile(-1, -1, logical=True)
-                worker.place(w_tile)
-                comp_tiles.append(w_tile)
-
             for buffer in worker.buffers:
                 buffer.place(worker.tile)
 
-        # Place ObjectFifo endpoints
-        fifos_to_process = list(object_fifos)
-        while fifos_to_process:
-            ofh = fifos_to_process.pop()
-            all_eps = ofh.all_of_endpoints()
-            ofh_eps = ofh._object_fifo._get_endpoint(is_prod=ofh._is_prod)
-            link_eps = [ofe for ofe in all_eps if isinstance(ofe, ObjectFifoLink)]
-            
-            # Place normal endpoints for this handle
-            for ofe in ofh_eps:
-                if isinstance(ofe, Worker):
-                    continue
-
-                if ofe.tile in (AnyMemTile, AnyShimTile):
-                    if isinstance(ofe, ObjectFifoLink):
-                        continue
-
-                    num_chans, link_chans = self._get_channel_reqs(ofe, ofh._is_prod)
-                    tiles_list, chans, other_chans = self._get_tile_alloc_lists(
-                        ofe,
-                        comp_tiles,
-                        mem_tiles,
-                        shim_tiles,
-                        channels_in,
-                        channels_out,
-                        ofh._is_prod,
-                    )
-
-                    self._place_endpoint(
-                        ofe,
-                        chans,
-                        other_chans,
-                        num_chans,
-                        link_chans,
-                        tiles_list,
-                        device,
-                        ofh._is_prod,
-                    )
-
-            # Place link endpoints for this handle
-            for ofl in link_eps:
-                if ofl.tile in (AnyMemTile, AnyComputeTile):
-                    num_chans, link_chans = self._get_channel_reqs(ofl, ofh._is_prod)
-                    tiles_list, chans, other_chans = self._get_tile_alloc_lists(
-                        ofl,
-                        comp_tiles,
-                        mem_tiles,
-                        shim_tiles,
-                        channels_in,
-                        channels_out,
-                        ofh._is_prod,
-                    )
-
-                    self._place_endpoint(
-                        ofl,
-                        chans,
-                        other_chans,
-                        num_chans,
-                        link_chans,
-                        tiles_list,
-                        device,
-                        ofh._is_prod,
-                    )
-
-            self.sort_by_overlap(fifos_to_process, ofh)
-
-    def _get_channel_reqs(self, ofe, is_prod):
-        """
-        Returns (primary_channels, secondary_channels).
-        Secondary channels are used bc links use channels
-        in both directions.
-        """
-        if isinstance(ofe, ObjectFifoLink):
-            if is_prod:
-                return len(ofe._srcs), len(ofe._dsts)
-            else:
-                return len(ofe._dsts), len(ofe._srcs)
-        return 1, 0
-
-    def _get_tile_alloc_lists(
-        self,
-        ofe: ObjectFifoEndpoint,
-        comp_tiles: list[Tile],
-        mem_tiles: list[Tile],
-        shim_tiles: list[Tile],
-        channels_in: dict[Tile, int],
-        channels_out: dict[Tile, int],
-        is_prod: bool,
-    ):
-        if ofe.tile == AnyMemTile:
-            return (
-                mem_tiles,
-                (channels_out if is_prod else channels_in),
-                (channels_in if is_prod else channels_out),
-            )
-        elif ofe.tile == AnyShimTile:
-            return (
-                shim_tiles,
-                (channels_in if is_prod else channels_out),
-                (channels_out if is_prod else channels_in),
-            )
-        elif ofe.tile == AnyComputeTile:
-            return (
-                comp_tiles,
-                (channels_out if is_prod else channels_in),
-                (channels_in if is_prod else channels_out),
-            )
+    def get_node_info(tile):
+        if tile == AnyComputeTile:
+            return "COMP", -1
+        elif tile == AnyMemTile:
+            return "MEM", 1
+        elif tile == AnyShimTile:
+            return "SHIM", 0
         else:
-            raise ValueError(f"Unknown tile type: {ofe.tile} for endpoint {ofe}")
-
-    def _update_channels(
-        self,
-        chans: dict[Tile, int],
-        tile: Tile,
-        num_req_chans: int,
-        device: Device,
-        is_prod: bool,
-        is_link: bool = False,
-        num_link_chans: int = 0,
-        link_chans: dict[Tile, int] = {},
-    ):
-        cur = chans.get(tile, 0)
-        if cur + num_req_chans > device.get_num_connections(tile, is_prod):
-            return False
-
-        if is_link:
-            other_cur = link_chans.get(tile, 0)
-            if other_cur + num_link_chans > device.get_num_connections(tile, not is_prod):
-                return False
-            link_chans[tile] = other_cur + num_link_chans
-
-        chans[tile] = cur + num_req_chans
-        return True
-
-    def _place_endpoint(
-        self,
-        ofe: ObjectFifoEndpoint,
-        chans: dict[Tile, int],
-        other_chans: dict[Tile, int],
-        num_req_chans: int,
-        num_link_chans: int,
-        tiles_list: list[Tile],
-        device: Device,
-        is_prod: bool,
-    ):
-        is_link = isinstance(ofe, ObjectFifoLink)
-        for p_tile in tiles_list:
-            if self._update_channels(
-                chans,
-                p_tile,
-                num_req_chans,
-                device,
-                is_prod,
-                is_link,
-                num_link_chans,
-                other_chans,
-            ):
-                ofe.place(p_tile)
-                return
-
-        # Create a new tile if no existing one works
-        if ofe.tile == AnyComputeTile:
-            p_tile = Tile(-1, -1, logical=True)
-        elif ofe.tile == AnyMemTile:
-            p_tile = Tile(-1, 1, logical=True)
-        else:  # AnyShimTile
-            p_tile = Tile(-1, 0, logical=True)
-
-        if self._update_channels(
-            chans,
-            p_tile,
-            num_req_chans,
-            device,
-            is_prod,
-            is_link,
-            num_link_chans,
-            other_chans,
-        ):
-            ofe.place(p_tile)
-            tiles_list.append(p_tile)
-        else:
-            raise ValueError(
-                f"Requested {'OUT' if is_prod else 'IN'} DMA channels "
-                f"exceed capacity for tile {p_tile} {id(p_tile)}"
-            )
-
-    def sort_by_overlap(
-        self,
-        fifo_handles: list[ObjectFifoHandle],
-        ref_handle: ObjectFifoHandle,
-    ):  
-        '''
-        Utility function that sorts net processing so nets with
-        shared endpoints are more likely to share mem/shim tiles.
-        '''
-        # Filter RuntimeEndpoint due to __eq__ overwrite
-        ref_eps = {
-            ep for ep in ref_handle.all_of_endpoints()
-            if not isinstance(ep, RuntimeEndpoint)
-        }
-        fifo_handles.sort(
-            key=lambda h: len(
-                ref_eps & {
-                    ep for ep in h.all_of_endpoints()
-                    if not isinstance(ep, RuntimeEndpoint)
-                }
-            ),
-            reverse=True,
-        )       
+            raise ValueError("Unknown placeholder tile type." + str(tile))
 
 class SequentialPlacer(Placer):
     """SequentialPlacer is a simple implementation of a placer. The SequentialPlacer is so named
