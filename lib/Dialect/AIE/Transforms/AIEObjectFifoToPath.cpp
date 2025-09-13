@@ -1526,7 +1526,7 @@ struct AIEObjectFifoToPathPass : public AIEObjectFifoToPathBase<AIEObjectFifoToP
                                     consumerWireType, dstChannelsAttr,
                                     producer.getHopTileIds().has_value() ?
                                         producer.getHopTileIdsAttr()
-                                        : IntArray3DAttr());
+                                        : ArrayAttr::get(builder.getContext(), {}));
     }
 
     //===------------------------------------------------------------------===//
