@@ -464,7 +464,7 @@ def AIE_CircuitPathOp : AIE_Op<"circuit_path", []> {
         Variadic<Index>:$dests,
         WireBundle:$dest_bundle,
         ConfinedAttr<DenseI32ArrayAttr, [DenseArrayNonNegative<DenseI32ArrayAttr>]>:$dest_channels,
-        IntArray3DAttr:$hop_tile_ids
+        ArrayAttr:$hop_tile_ids
   );
 
   let summary = "A circuit-switched connection between cores";
@@ -487,6 +487,27 @@ def AIE_CircuitPathOp : AIE_Op<"circuit_path", []> {
     `(` $source `:` $source_bundle `,` `[` $dests `]` `:` $dest_bundle `)` attr-dict
   }];
 
+  let extraClassDeclaration = [{
+    std::vector<std::vector<TileID>> getTilesAlongPath() {
+      std::vector<std::vector<TileID>> paths;
+
+      auto arr3dAttr = getHopTileIds();
+
+      for (auto arr2dAttrRaw : arr3dAttr) {
+        auto arr2dAttr = llvm::dyn_cast<mlir::ArrayAttr>(arr2dAttrRaw);
+        std::vector<TileID> pathPerDst;
+
+        for (auto arr1dAttrRaw : arr2dAttr) {
+          auto arr1dAttr = llvm::dyn_cast<mlir::ArrayAttr>(arr1dAttrRaw);
+          int col = llvm::dyn_cast<mlir::IntegerAttr>(arr1dAttr[0]).getInt();
+          int row = llvm::dyn_cast<mlir::IntegerAttr>(arr1dAttr[1]).getInt();
+          pathPerDst.push_back({col, row});
+        }
+        paths.push_back(std::move(pathPerDst));
+      }
+      return paths;
+    }
+  }];
 }
 
 def AIE_FlowOp: AIE_Op<"flow", []> {
@@ -1766,7 +1787,7 @@ def AIE_ObjectFifoCreateOp: AIE_Op<"objectfifo", [HasParent<"DeviceOp">, Symbol]
         OptionalAttr<ConfinedAttr<AIEI32Attr, [IntMinValue<1>]>>:$repeat_count,
         InitValuesArrayAttr:$initValues,
         OptionalAttr<BDPadLayoutArrayAttr>:$padDimensions,
-        OptionalAttr<IntArray3DAttr>:$hop_tile_ids
+        OptionalAttr<ArrayAttr>:$hop_tile_ids
   );
 
   let assemblyFormat = [{

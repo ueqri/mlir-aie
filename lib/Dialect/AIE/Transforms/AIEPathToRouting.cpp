@@ -146,27 +146,6 @@ struct AIEPathToRoutingPass : public AIEPathToRoutingBase<AIEPathToRoutingPass> 
     return channel;
   }
 
-  std::vector<std::vector<TileID>> getTilesAlongPath(ArrayRef<IntArray2DAttr> arr3dAttr) {
-    std::vector<std::vector<TileID>> hops;
-
-    if (arr3dAttr.empty())
-      return hops; // return empty if no hops
-
-    for (auto arr2dAttr : arr3dAttr) {
-      std::vector<TileID> hopsPerDst;
-
-      for (auto arr1dAttr : arr2dAttr) {
-        assert(arr1dAttr.size() == 2);
-        int col = arr1dAttr[0].getInt();
-        int row = arr1dAttr[1].getInt();
-        hopsPerDst.push_back({col, row});
-      }
-      hops.push_back(std::move(hopsPerDst));
-    }
-
-    return hops;
-  }
-
   TileOp getTile(OpBuilder &builder, int col, int row) {
     if (coordToTile.count({col, row})) {
       return coordToTile[{col, row}];
@@ -243,9 +222,8 @@ struct AIEPathToRoutingPass : public AIEPathToRoutingBase<AIEPathToRoutingPass> 
 
       WireBundle srcBundle = pathOp.getSourceBundle();
       int srcChannel = pathOp.getSourceChannel();
-      llvm::ArrayRef<IntArray2DAttr> hops = pathOp.getHopTileIds();
-      std::vector<std::vector<TileID>> pathTiles =
-          getTilesAlongPath(hops);
+      std::vector<std::vector<TileID>> pathTiles = pathOp.getTilesAlongPath();
+
       LLVM_DEBUG({
         auto srcTile = cast<TileOp>(pathOp.getSource().getDefiningOp());
         TileID srcTileId = {srcTile.colIndex(), srcTile.rowIndex()};

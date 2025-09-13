@@ -45,25 +45,23 @@ struct AIEPlaceTilesPass : public AIEPlaceTilesBase<AIEPlaceTilesPass> {
       auto route_info = input["nets"][i]["routing_info"];
 
       if (route_info["connection_type"] == "circuit_switch") {
-        SmallVector<IntArray2DAttr> outerArray;
+        SmallVector<Attribute> outerArray;
 
         for (const auto &hopPath : route_info["intermediates"]) {
-          SmallVector<IntArray1DAttr> innerArray; 
+          SmallVector<Attribute> innerArray;
 
           for (const auto &coords : hopPath) {
-            SmallVector<IntegerAttr> coordAttrs;
+            SmallVector<Attribute> coordAttrs;
             coordAttrs.push_back(builder.getI32IntegerAttr(coords[0].get<int>()));
             coordAttrs.push_back(builder.getI32IntegerAttr(coords[1].get<int>()));
 
-            auto coordAttr = IntArray1DAttr::get(fifoOp.getContext(), coordAttrs);
+            auto coordAttr = builder.getArrayAttr(coordAttrs); // 1D array
             innerArray.push_back(coordAttr);
           }
-
-          auto hopPathAttr = IntArray2DAttr::get(fifoOp.getContext(), innerArray); 
+          auto hopPathAttr = builder.getArrayAttr(innerArray); // 2D array
           outerArray.push_back(hopPathAttr);
         }
-
-        auto fullAttr = IntArray3DAttr::get(fifoOp.getContext(), outerArray); 
+        auto fullAttr = builder.getArrayAttr(outerArray); // 3D array as plain ArrayAttr
         fifoOp.setHopTileIdsAttr(fullAttr);
         fifoOp.setVia_DMAAttr(builder.getBoolAttr(true));
       }
@@ -76,6 +74,17 @@ struct AIEPlaceTilesPass : public AIEPlaceTilesBase<AIEPlaceTilesPass> {
         }
         fifoOp.setViaSharedMemAttr(ArrayAttr::get(fifoOp.getContext(), 
             shareDirectionAttrs));
+      }
+      else if (route_info["connection_type"] == "intra_tile") {
+        SmallVector<Attribute> shareDirectionAttrs;
+        shareDirectionAttrs.push_back(builder.getIntegerAttr(
+            builder.getI32Type(), -1));
+        fifoOp.setViaSharedMemAttr(ArrayAttr::get(fifoOp.getContext(), 
+            shareDirectionAttrs));
+      }
+      else {
+        fifoOp.emitError("Unsupported connection type in JSON");
+        return;
       }
     }
     LLVM_DEBUG(llvm::dbgs() << "FIFOs configured successfully.\n");

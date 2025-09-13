@@ -56,7 +56,7 @@ class Program:
                 all_fifos.update(self._rt.fifos)
                 for w in self._rt.workers:
                     all_fifos.update(w.fifos)
-
+                all_fifos = sorted(all_fifos, key=lambda obj: obj.name)
                 if placer:
                     # TODO: should maybe just take runtime?
                     placer.make_placement(
