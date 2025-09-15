@@ -29,19 +29,33 @@ struct AIEPlaceTilesPass : public AIEPlaceTilesBase<AIEPlaceTilesPass> {
     LLVM_DEBUG(llvm::dbgs() << "Number of tiles: " << tileOps.size() << "\n");
     auto fifoOps = llvm::to_vector(device.getOps<ObjectFifoCreateOp>());
     LLVM_DEBUG(llvm::dbgs() << "Number of FIFOs: " << fifoOps.size() << "\n");
-    for (size_t i = 0; i < tileOps.size(); i++) {
-      auto tileOp = tileOps[i];
-      auto node = input["nodes"][i];
 
-      int col = node["col_x"];
-      int row = node["row_y"];
+    for (const auto &node : input["nodes"]) {
+      int id = node["id"].get<int>();
 
-      tileOp.setCol(col);
-      tileOp.setRow(row);
+      // check bounds before indexing
+      if (id >= 0 && id < (int)tileOps.size()) {
+        TileOp tile = tileOps[id];
+        
+        int col = node["col_x"];
+        int row = node["row_y"];
+
+        tile.setCol(col);
+        tile.setRow(row);
+        LLVM_DEBUG(llvm::dbgs() << "Matched node id " << id << " -> TileOp at index " << id << "\n");
+      } 
+      else 
+        llvm::errs() << "Warning: node id " << id << " out of range\n";
     }
     LLVM_DEBUG(llvm::dbgs() << "Tiles placed successfully.\n");
+
     for (size_t i = 0; i < fifoOps.size(); i++) {
       auto fifoOp = fifoOps[i];
+      if (!input["nets"][i].contains("routing_info")) {
+        fifoOp.emitError("No routing_info key found in JSON for net " + 
+            std::to_string(input["nets"][i]["id"].get<int>()));
+        return;
+      }
       auto route_info = input["nets"][i]["routing_info"];
 
       if (route_info["connection_type"] == "circuit_switch") {
