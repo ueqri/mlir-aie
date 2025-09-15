@@ -41,6 +41,7 @@ struct AIEExtractObjectFifoPass
 
     id = 0;
     DenseMap<ObjectFifoCreateOp, int> fifoIdMap;
+    DenseMap<int, std::pair<int64_t, int64_t>> byteSizeMap;
     for (auto objectFifo : device.getOps<ObjectFifoCreateOp>()) {
       int sId = tileIdMap[objectFifo.getProducerTile()];
       std::vector<int> dIds;
@@ -59,6 +60,7 @@ struct AIEExtractObjectFifoPass
       // Compute size in bytes
       int64_t bits = memrefTy.getElementType().getIntOrFloatBitWidth();
       int64_t byteSize = shapeProduct * (bits / 8);
+      
 
       std::vector<int64_t> depths;
       auto elemAttr = objectFifo.getElemNumberAttr();
@@ -72,6 +74,8 @@ struct AIEExtractObjectFifoPass
         objectFifo.emitError("Unsupported elemNumber format");
         return;
       }
+
+      byteSizeMap[id] = {byteSize, depths[0]};
 
       json net = {
           {"net_id", id},
@@ -99,6 +103,32 @@ struct AIEExtractObjectFifoPass
         {"dst_net_ids", dTIds}
       };
       output["links"].push_back(link);
+    }
+
+    for (auto cascadeOp : device.getOps<CascadeFlowOp>()) {
+      auto sTileOp = cascadeOp.getSourceTileOp();
+      auto dTileOp = cascadeOp.getDestTileOp();
+      int sId = tileIdMap[sTileOp.getResult()];
+      int dId = tileIdMap[dTileOp.getResult()];
+      json cascade = {
+        {"src_node_id", sId},
+        {"dst_node_id", dId}
+      };
+      output["cascades"].push_back(cascade);
+    }
+
+    for (auto allocOp : device.getOps<ObjectFifoAllocateOp>()) {
+      int fId = fifoIdMap[allocOp.getObjectFifo()];
+      auto [byteSize, depth] = byteSizeMap[fId];
+      TileOp tileOp = allocOp.getDelegateTileOp();
+      int tId = tileIdMap[tileOp.getResult()];
+      json alloc = {
+        {"net_id", fId},
+        {"node_id", tId},
+        {"depth", depth},
+        {"byte_size_per_depth", byteSize}
+      };
+      output["pre_alloc_buffers"].push_back(alloc);
     }
 
     // write json to file
