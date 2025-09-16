@@ -10,12 +10,75 @@ from abc import ABCMeta, abstractmethod
 import statistics
 import json
 import numpy as np
+import os
+from subprocess import Popen, PIPE, TimeoutExpired
+from dataclasses import dataclass
 
 from .device import Device
 from .runtime import Runtime, RuntimeEndpoint
 from .worker import Worker
 from .device import AnyComputeTile, AnyMemTile, AnyShimTile, Tile
 from .dataflow import ObjectFifoHandle, ObjectFifoLink, ObjectFifoEndpoint
+
+@dataclass
+class CommandResult:
+    cmd: str
+    cwd: str
+    env: dict
+    stdout: str
+    stderr: str
+    returncode: int
+    is_timed_out: bool
+
+    def ok(self):
+        return self.returncode == 0 and not self.is_timed_out
+
+    def check(self):
+        if not self.ok():
+            raise RuntimeError(
+                f"Command '{self.cmd}' (on directory '{self.cwd}' with env '{self.env}') "
+                f"failed with return code {self.returncode}.\n\n"
+                f"Stdout:\n{self.stdout}\n\nStderr:\n{self.stderr}"
+            )
+
+    def __repr__(self):
+        return (
+            f"CommandResult(cmd={self.cmd}, cwd={self.cwd}, returncode={self.returncode}, "
+            f"is_timed_out={self.is_timed_out},\nstdout={self.stdout},\nstderr={self.stderr},\nenv={self.env})"
+        )
+
+def read_text_file(file_path):
+    with open(file_path, "r") as f:
+        return f.read()
+
+
+def write_text_file(file_path, content):
+    with open(file_path, "w") as f:
+        f.write(content)
+
+def subprocess_run_cmd(cmd, cwd=None, env=None, timeout_sec=36000):
+    assert isinstance(cmd, str), "Command must be a string"
+    process = Popen(cmd, cwd=cwd, shell=True, stdout=PIPE, stderr=PIPE, env=env)
+
+    is_timed_out = False
+
+    try:
+        stdout, stderr = process.communicate(timeout=timeout_sec)
+    except TimeoutExpired:
+        process.kill()
+        stdout, stderr = process.communicate()
+        is_timed_out = True
+        print(f"Command '{cmd}' timed out after {timeout_sec} seconds.")
+
+    return CommandResult(
+        cmd=cmd,
+        cwd=cwd,
+        env=env,
+        stdout=stdout.decode(),
+        stderr=stderr.decode(),
+        returncode=process.returncode,
+        is_timed_out=is_timed_out,
+    )
 
 
 class Placer(metaclass=ABCMeta):
@@ -41,7 +104,7 @@ class Placer(metaclass=ABCMeta):
         """
         ...
 
-class NullPlacer(Placer):
+class PnrPlacer(Placer):
     """
     TODO: Change placer name
     """
@@ -120,10 +183,26 @@ class NullPlacer(Placer):
         with open("netlist.json", "w") as f:
             json.dump(data, f, indent=2)
 
-        # --- Run placer subprocess here ---
+        
         # subprocess.run([...], check=True)
         breakpoint()
 
+        # --- Run placer subprocess here ---
+        pnr_args = "-n 200"
+        pnr_bin = os.path.expandvars("$NPU_PNR_BIN_DIR/placer")
+        assert os.path.exists(pnr_bin), f"PnR binary not found at {pnr_bin}"
+        pnr_cmd = str(
+            f"{pnr_bin} netlist.json "
+            "--output=placed.json "
+            "--route-summary=route_summary.json"
+        )
+        if pnr_args is not None:
+            pnr_cmd += f" {pnr_args}"
+        
+        cwd = os.getcwd()
+        pnr = subprocess_run_cmd(pnr_cmd, cwd=cwd)
+        pnr.check()
+        breakpoint()
         # Load placed netlist
         with open("placed.json", "r") as f:
             placed_data = json.load(f)
