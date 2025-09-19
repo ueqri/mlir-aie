@@ -417,7 +417,7 @@ class object_fifo(ObjectFifoCreateOp):
         plio=None,
         padDimensions=None,
         disable_synchronization=None,
-        hop_tiles_ids=None,
+        hop_tile_ids=None,
         via_shared_mem=None,
     ):
         self.datatype = try_convert_np_type_to_mlir_type(datatype)
@@ -436,6 +436,22 @@ class object_fifo(ObjectFifoCreateOp):
                     init_val = array("i", e)
                 values.append(DenseElementsAttr.get(init_val, type=self.datatype))
             initValues = _arrayAttr(values, None)
+        if via_shared_mem is not None:
+            values = []
+            for e in via_shared_mem:
+                values.append(IntegerAttr.get(T.i32(), e))
+            via_shared_mem = _arrayAttr(values, None)
+        if hop_tile_ids is not None:
+            outer_values = []
+            for hop_path in hop_tile_ids:  # list[list[list[int]]]
+                mid_values = []
+                for coords in hop_path:  # list[list[int]]
+                    inner_values = []
+                    for val in coords:  # list[int]
+                        inner_values.append(IntegerAttr.get(T.i32(), val))
+                    mid_values.append(_arrayAttr(inner_values, None))
+                outer_values.append(_arrayAttr(mid_values, None))
+            hop_tile_ids = _arrayAttr(outer_values, None)
         super().__init__(
             sym_name=name,
             producerTile=producerTile,
@@ -449,7 +465,7 @@ class object_fifo(ObjectFifoCreateOp):
             padDimensions=padDimensions,
             disable_synchronization=disable_synchronization,
             initValues=initValues,
-            hop_tile_ids=hop_tiles_ids,
+            hop_tile_ids=hop_tile_ids,
             via_shared_mem=via_shared_mem,
         )
 

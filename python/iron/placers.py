@@ -11,6 +11,7 @@ import statistics
 import json
 import numpy as np
 import os
+import sys
 from subprocess import Popen, PIPE, TimeoutExpired
 from dataclasses import dataclass
 
@@ -104,14 +105,14 @@ class Placer(metaclass=ABCMeta):
         """
         ...
 
-class PnrPlacer(Placer):
+class SAPlacer(Placer):
     """
-    TODO: Change placer name
+    Simulated Annealing Placer
     """
 
-    def __init__(self):
+    def __init__(self, pnr_args: str = None):
         super().__init__()
-
+        self._pnr_args = pnr_args
     def make_placement(
         self,
         device: Device,
@@ -121,15 +122,6 @@ class PnrPlacer(Placer):
     ):
 
         data = {"nodes": [], "nets": [], "links": []}
-
-        # Mapping between handles/FIFOs and IDs
-        fifo_handle_ids = {ofh: idx for idx, ofh in enumerate(fifo_handles)}
-        id_to_fifo_handle = {idx: ofh for idx, ofh in enumerate(fifo_handles)}
-
-        # Build nodes
-        for idx, ofh in enumerate(fifo_handles):
-            t_type, row_y = self.get_node_info(ofh.tile)
-            data["nodes"].append({"id": idx, "type": t_type, "col_x": -1, "row_y": row_y})
         
         # Get FIFO list
         seen = set()
@@ -142,15 +134,18 @@ class PnrPlacer(Placer):
 
         fifo_ids = {of: idx for idx, of in enumerate(of_list)}
         id_to_fifo = {idx: of for idx, of in enumerate(of_list)}
+        eps_to_ids: dict[ObjectFifoEndpoint, int] = {}
+        ids_to_eps: dict[int, ObjectFifoEndpoint] = {}
 
         # Build nets
         for idx, of in enumerate(of_list):
-            src_node_id = fifo_handle_ids[of._prod]
-            dst_node_ids = [fifo_handle_ids[c] for c in of._cons]
+            src_node_id = self._get_or_assign_id(eps_to_ids, ids_to_eps, of._prod.endpoint)
+            dst_node_ids = [self._get_or_assign_id(eps_to_ids, ids_to_eps, c.endpoint) for c in of._cons]
             depths = of._get_depths()
             if not isinstance(depths, list):
                 depths = [depths]
-            bytes_per_depth = np.prod(of.shape) * of.dtype.itemsize
+            depths = [int(d) for d in depths]  # ensure plain ints
+            bytes_per_depth = int(np.prod(of.shape) * np.dtype(of.dtype).itemsize)
 
             data["nets"].append({
                 "net_id": idx,
@@ -160,6 +155,11 @@ class PnrPlacer(Placer):
                 "depths": depths,
                 "byte_size_per_depth": bytes_per_depth
             })
+
+        # Build nodes
+        for ep, n_id in eps_to_ids.items():
+            t_type, row_y = self._get_node_info(ep.tile)
+            data["nodes"].append({"id": n_id, "type": t_type, "col_x": -1, "row_y": row_y})
 
         # Build links
         link_set = set()
@@ -184,25 +184,21 @@ class PnrPlacer(Placer):
             json.dump(data, f, indent=2)
 
         
-        # subprocess.run([...], check=True)
-        breakpoint()
-
         # --- Run placer subprocess here ---
-        pnr_args = "-n 200"
         pnr_bin = os.path.expandvars("$NPU_PNR_BIN_DIR/placer")
         assert os.path.exists(pnr_bin), f"PnR binary not found at {pnr_bin}"
         pnr_cmd = str(
             f"{pnr_bin} netlist.json "
             "--output=placed.json "
-            "--route-summary=route_summary.json"
+            "--route-summary=route_summary.json "
         )
-        if pnr_args is not None:
-            pnr_cmd += f" {pnr_args}"
-        
+        if self._pnr_args is not None:
+            pnr_cmd += f" {self._pnr_args}"
+        print(f"Running pnr: {pnr_cmd}", file=sys.stderr)
         cwd = os.getcwd()
         pnr = subprocess_run_cmd(pnr_cmd, cwd=cwd)
         pnr.check()
-        breakpoint()
+        print("Finished pnr", file=sys.stderr)
         # Load placed netlist
         with open("placed.json", "r") as f:
             placed_data = json.load(f)
@@ -215,13 +211,14 @@ class PnrPlacer(Placer):
             if t is None:
                 t = Tile(*coord)
                 coord_to_tile[coord] = t
-            id_to_fifo_handle[node["id"]].endpoint.place(t)
-
+            ids_to_eps[node["id"]].place(t)
+        # assert every endpoint.tile is instance Tile
+        for ep, n_id in eps_to_ids.items():
+            if not isinstance(ep.tile, Tile):
+                raise ValueError(f"Endpoint {ep} was not placed by placer!")
         # Apply net placements and routing info
         for net in placed_data["nets"]:
             of = id_to_fifo[net["net_id"]]
-            if net["net_name"] != of.name:
-                raise ValueError("Placed netlist does not match original netlist!")
 
             routing = net["routing_info"]
             if routing["connection_type"] == "circuit_switch":
@@ -235,18 +232,38 @@ class PnrPlacer(Placer):
                 raise ValueError(f"Unknown connection type {routing['connection_type']}")
         # Place buffers for workers
         for worker in workers:
+            assert isinstance(worker.tile, Tile), f"Worker {worker} was not placed by placer!"
             for buffer in worker.buffers:
                 buffer.place(worker.tile)
 
-    def get_node_info(tile):
+    def _get_node_info(self, tile):
         if tile == AnyComputeTile:
             return "COMP", -1
         elif tile == AnyMemTile:
             return "MEM", 1
         elif tile == AnyShimTile:
             return "SHIM", 0
+        elif isinstance(tile, Tile):
+            if tile.row == 0:
+                return "SHIM", 0
+            elif tile.row == 1:
+                return "MEM", 1
+            else:
+                return "COMP", -1
         else:
-            raise ValueError("Unknown placeholder tile type." + str(tile))
+            raise ValueError("Unknown tile type." + str(tile))
+
+    def _get_or_assign_id(
+        self, 
+        endpoint_to_ids, 
+        ids_to_endpoints, 
+        endpoint
+    ):
+        if endpoint not in endpoint_to_ids:
+            new_id = len(endpoint_to_ids)
+            endpoint_to_ids[endpoint] = new_id
+            ids_to_endpoints[new_id] = endpoint
+        return endpoint_to_ids[endpoint]
 
 class SequentialPlacer(Placer):
     """SequentialPlacer is a simple implementation of a placer. The SequentialPlacer is so named

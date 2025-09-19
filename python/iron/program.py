@@ -12,7 +12,7 @@ from ..dialects.aie import device, tile
 
 from .device import Device
 from .runtime import Runtime
-from .placers import Placer, NullPlacer
+from .placers import Placer
 from .resolvable import Resolvable
 
 # import aie.utils.trace as trace_utils

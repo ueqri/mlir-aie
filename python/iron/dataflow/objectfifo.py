@@ -547,6 +547,7 @@ class ObjectFifoHandle(Resolvable):
         dims_to_stream: list[list[Sequence[int]]] | None = None,
         dims_from_stream: list[list[Sequence[int]]] | None = None,
         plio: bool = False,
+        p_depth: int | None = None,
     ) -> list[ObjectFifo]:
         """Split the data from an ObjectFifoConsumer handle by sending it to producers in N newly constructed ObjectFifos.
         Note this operation is only valid for ObjectFifoHandles of type consumer.
@@ -612,9 +613,11 @@ class ObjectFifoHandle(Resolvable):
                     plio=plio,
                 )
             )
-
         # Create link and set it as endpoints
-        subfifo_prods = [s.prod() for s in subfifos]
+        if p_depth:
+            subfifo_prods = [s.prod(p_depth) for s in subfifos]
+        else:
+            subfifo_prods = [s.prod() for s in subfifos]
         _ = ObjectFifoLink(self, subfifo_prods, placement, [], offsets)
         return subfifos
 
@@ -650,7 +653,10 @@ class ObjectFifoHandle(Resolvable):
             raise ValueError(f"Cannot forward a {self.handle_type} ObjectFifoHandle")
         if obj_type:
             obj_type = [obj_type]
+        p_depth = None
         if depth:
+            if self._depth != depth:
+                p_depth = self._depth
             depth = [depth]
         if name:
             name = [name]
@@ -660,7 +666,6 @@ class ObjectFifoHandle(Resolvable):
             dims_to_stream = [dims_to_stream]
         if dims_from_stream:
             dims_from_stream = [dims_from_stream]
-
         forward_fifo = self.split(
             [0],
             placement=placement,
@@ -670,6 +675,7 @@ class ObjectFifoHandle(Resolvable):
             dims_to_stream=dims_to_stream,
             dims_from_stream=dims_from_stream,
             plio=plio,
+            p_depth=p_depth,
         )
         return forward_fifo[0]
 
