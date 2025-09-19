@@ -125,7 +125,19 @@ struct AIEPathToRoutingPass : public AIEPathToRoutingBase<AIEPathToRoutingPass> 
     }
   }
 
-  int getChannel(TileID tileId, WireBundle bundle, bool isSrc, CircuitPathOp pathOp) {
+  WireBundle getOppositeBundle(WireBundle bundle) {
+    switch (bundle) {
+      case WireBundle::North: return WireBundle::South;
+      case WireBundle::South: return WireBundle::North;
+      case WireBundle::East: return WireBundle::West;
+      case WireBundle::West: return WireBundle::East;
+      default:
+        llvm_unreachable("Invalid bundle for opposite");
+    }
+  }
+
+  int getChannel(TileID tileId, WireBundle bundle, bool isSrc, CircuitPathOp pathOp,
+                 const AIETargetModel &targetModel) {
     auto &chanMap = isSrc ? sbFreeChans.at(tileId).srcChans :
                             sbFreeChans.at(tileId).dstChans;
 
@@ -141,7 +153,11 @@ struct AIEPathToRoutingPass : public AIEPathToRoutingBase<AIEPathToRoutingPass> 
     }
 
     int channel = *channels.begin();
-    channels.erase(channels.begin());
+    channels.erase(channel);
+    if (targetModel.isMemTile(tileId.col, tileId.row) && !isSrc) {
+      auto &otherChanMap = sbFreeChans.at(tileId).srcChans;
+      otherChanMap[getOppositeBundle(bundle)].erase(channel);
+    }
 
     return channel;
   }
@@ -187,7 +203,6 @@ struct AIEPathToRoutingPass : public AIEPathToRoutingBase<AIEPathToRoutingPass> 
 
   void addConnection(OpBuilder &builder, Interconnect op, WireBundle inBundle,
                      int inIndex, WireBundle outBundle, int outIndex) const {
-
     Region &r = op.getConnections();
     Block &b = r.front();
     auto point = builder.saveInsertionPoint();
@@ -198,11 +213,11 @@ struct AIEPathToRoutingPass : public AIEPathToRoutingBase<AIEPathToRoutingPass> 
 
     builder.restoreInsertionPoint(point);
 
-    LLVM_DEBUG(llvm::dbgs()
+    llvm::dbgs()
                << "\t\taddConnection() (" << op.colIndex() << ","
-               << op.rowIndex() << ") " << stringifyWireBundle(inBundle)
-               << inIndex << " -> " << stringifyWireBundle(outBundle)
-               << outIndex << "\n");
+               << op.rowIndex() << ") " << inBundle
+               << inIndex << " -> " << outBundle
+               << outIndex << "\n";
   }
 
   void runOnOperation() override {
@@ -223,32 +238,52 @@ struct AIEPathToRoutingPass : public AIEPathToRoutingBase<AIEPathToRoutingPass> 
       WireBundle srcBundle = pathOp.getSourceBundle();
       int srcChannel = pathOp.getSourceChannel();
       std::vector<std::vector<TileID>> pathTiles = pathOp.getTilesAlongPath();
+      
+      auto srcTile = cast<TileOp>(pathOp.getSource().getDefiningOp());
+      TileID srcTileId = {srcTile.colIndex(), srcTile.rowIndex()};
+      llvm::dbgs() << "Processing pathOp with Src: " << srcTileId << "\n";
+      
+      auto firstInnerMemTileIndex = [&](const std::vector<TileID> &path) {
+        for (size_t i = 1; i + 1 < path.size(); i++) {  // skip src and dst
+          TileID t = path[i];
+          if (targetModel.isMemTile(t.col, t.row)) {
+            return static_cast<int>(i);
+          }
+        }
+        return std::numeric_limits<int>::max();
+      };
 
-      LLVM_DEBUG({
-        auto srcTile = cast<TileOp>(pathOp.getSource().getDefiningOp());
-        TileID srcTileId = {srcTile.colIndex(), srcTile.rowIndex()};
-        llvm::dbgs() << "Processing pathOp with Src: " << srcTileId << "\n";
+      std::vector<std::pair<std::vector<TileID>, int>> pathChanPairs;
+      for (size_t i = 0; i < pathTiles.size(); i++) {
+        pathChanPairs.emplace_back(pathTiles[i], pathOp.getDestChannels()[i]);
+      }
+
+      std::sort(pathChanPairs.begin(), pathChanPairs.end(),
+          [&](auto &a, auto &b) {
+            return firstInnerMemTileIndex(a.first) <
+                   firstInnerMemTileIndex(b.first);
       });
+
+      pathTiles.clear();
+      std::vector<int> destChannels;
+      for (auto &pc : pathChanPairs) {
+        pathTiles.push_back(std::move(pc.first));
+        destChannels.push_back(pc.second);
+      }
+
       for (size_t dst_i = 0; dst_i < pathOp.getDests().size(); dst_i++) {
-        auto dstTile = cast<TileOp>(pathOp.getDests()[dst_i].getDefiningOp());
-        TileID dstTileId = {dstTile.colIndex(), dstTile.rowIndex()};
+        TileID dstTileId = pathTiles[dst_i].back();
         WireBundle dstBundle = pathOp.getDestBundle();
-        int dstChannel = pathOp.getDestChannels()[dst_i];
+        int dstChannel = destChannels[dst_i];
 
-        LLVM_DEBUG({
-          auto srcTile = cast<TileOp>(pathOp.getSource().getDefiningOp());
-          TileID srcTileId = {srcTile.colIndex(), srcTile.rowIndex()};
-          TileID dstTileId = {dstTile.colIndex(), dstTile.rowIndex()};
-          llvm::dbgs() << "\tSrc: " << srcTileId << " -> "
+        llvm::dbgs() << "\tSrc: " << srcTileId << " -> "
                       << "Dst[" << dst_i << "]: " << dstTileId << "\n";
-        });
 
-        LLVM_DEBUG({
-          llvm::dbgs() << "\t\tPath: ";
+
+        llvm::dbgs() << "\t\tPath: ";
           for (const auto &hop : pathTiles[dst_i])
             llvm::dbgs() << hop << " ";
           llvm::dbgs() << "\n";
-        });
 
         // pathTiles is at least [src, dst], loop runs >= 1
         for (size_t i = 0; i < pathTiles[dst_i].size() - 1; i++) {
@@ -266,15 +301,39 @@ struct AIEPathToRoutingPass : public AIEPathToRoutingBase<AIEPathToRoutingPass> 
               // if A is src sb, also set input port
               sbConfigs[tileA].addSrc(Port{srcBundle, srcChannel});
             }
-            // set output port for tile A
+
+            // Initialize input port for tile B
+            int bChannel = getChannel(tileB, bundleB, true, pathOp, targetModel);
+            pInB = Port{bundleB, bChannel};
+
             if (sbConfigs.find(tileA) == sbConfigs.end())
               pathOp.emitOpError("Setting output port for sb with missing input port")
                   << " at sb(" << tileA.col << ", " << tileA.row << ")";
-            else
-              sbConfigs[tileA].addDst(Port{bundleA, getChannel(tileA, bundleA, false, pathOp)});
 
-            // Initialize input port for tile B
-            pInB = Port{bundleB, getChannel(tileB, bundleB, true, pathOp)};
+            // set output port for tile A
+            if (targetModel.isMemTile(tileB.col, tileB.row) && bundleB != WireBundle::DMA) {
+              llvm::dbgs() << "\t\tInter-mem case: ";
+              auto &chanMap = sbFreeChans.at(tileA).dstChans;
+              if (chanMap.find(bundleA) == chanMap.end()) {
+                pathOp.emitOpError("Bundle ") << stringifyEnum(bundleA) << " not available"
+                    << " at sb (" << tileA.col << ", " << tileA.row << ")";
+              }
+              std::set<int> &channels = chanMap[bundleA];
+              if (channels.find(bChannel) != channels.end()) 
+                channels.erase(bChannel);
+              else {
+                pathOp.emitOpError("Channel ") << bChannel << " for bundle "
+                    << stringifyEnum(bundleA) << " at sb (" << tileA.col << ", "
+                    << tileA.row << ") already used";
+              }
+
+              sbConfigs[tileA].addDst(Port{bundleA, bChannel});
+            }
+            else {
+              sbConfigs[tileA].addDst(
+                  Port{bundleA, getChannel(tileA, bundleA, false, pathOp, targetModel)}
+              );
+            }
           }
           
           // set input port for tile B
@@ -285,7 +344,7 @@ struct AIEPathToRoutingPass : public AIEPathToRoutingBase<AIEPathToRoutingPass> 
         sbConfigs[dstTileId].addDst(Port{dstBundle, dstChannel});
       }
     }
-    LLVM_DEBUG(llvm::dbgs() << "Building aie connections\n");
+    llvm::dbgs() << "Building AIE routing connections\n";
     OpBuilder builder = OpBuilder::atBlockTerminator(device.getBody());
     for (auto pathOp : device.getOps<CircuitPathOp>()) {
       auto srcTile = cast<TileOp>(pathOp.getSource().getDefiningOp());

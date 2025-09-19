@@ -159,18 +159,9 @@ class Device(Resolvable):
         loc: ir.Location | None = None,
         ip: ir.InsertionPoint | None = None,
     ) -> None:
-        if (t.col < 0) or (t.row < 0):
-            t.op = tile(
-                t.col,
-                t.row,
-                loc=loc,
-                ip=ip,
-                allocation_scheme=t.allocation_scheme,
-            )
-        else:
-            self._tiles[t.col][t.row].resolve(loc, ip, t.allocation_scheme)
-            t.op = self._tiles[t.col][t.row].op
 
+        self._tiles[t.col][t.row].resolve(loc, ip, t.allocation_scheme)
+        t.op = self._tiles[t.col][t.row].op
 
 class NPUBase(Device):
     """A base class which can be used to create other device specific classes.
