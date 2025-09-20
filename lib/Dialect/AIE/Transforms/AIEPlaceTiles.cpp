@@ -13,13 +13,18 @@ using namespace xilinx;
 using namespace xilinx::AIE;
 using json = nlohmann::json;
 
+static llvm::cl::opt<std::string> jsonFilePath(
+    "input-netlist-file",
+    llvm::cl::desc("Path to JSON netlist"),
+    llvm::cl::init("netlist.json"));
+
 struct AIEPlaceTilesPass : public AIEPlaceTilesBase<AIEPlaceTilesPass> {
   void runOnOperation() override {
     DeviceOp device = getOperation();
     OpBuilder builder = OpBuilder::atBlockTerminator(device.getBody()); 
-    std::ifstream jsonFile("netlist.json");
+    std::ifstream jsonFile(jsonFilePath);
     if (!jsonFile.is_open()) {
-        llvm::errs() << "Failed to open netlist.json\n";
+        llvm::errs() << "Failed to open " << jsonFilePath << "\n";
         return;
     }
 

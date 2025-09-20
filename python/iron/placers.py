@@ -180,7 +180,7 @@ class SAPlacer(Placer):
                 "dst_net_ids": dst_net_ids
             })
 
-        with open("netlist.json", "w") as f:
+        with open("build/netlist.json", "w") as f:
             json.dump(data, f, indent=2)
 
         
@@ -188,9 +188,10 @@ class SAPlacer(Placer):
         pnr_bin = os.path.expandvars("$NPU_PNR_BIN_DIR/placer")
         assert os.path.exists(pnr_bin), f"PnR binary not found at {pnr_bin}"
         pnr_cmd = str(
-            f"{pnr_bin} netlist.json "
-            "--output=placed.json "
-            "--route-summary=route_summary.json "
+            f"{pnr_bin} build/netlist.json "
+            "--output=build/pnr_placed_netlist.json "
+            "--route-summary=build/pnr_route_summary.json "
+            "--enable-packing "
         )
         if self._pnr_args is not None:
             pnr_cmd += f" {self._pnr_args}"
@@ -200,7 +201,7 @@ class SAPlacer(Placer):
         pnr.check()
         print("Finished pnr", file=sys.stderr)
         # Load placed netlist
-        with open("placed.json", "r") as f:
+        with open("build/pnr_placed_netlist.json", "r") as f:
             placed_data = json.load(f)
 
         # Map coordinates to tiles

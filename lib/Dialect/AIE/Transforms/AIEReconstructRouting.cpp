@@ -263,9 +263,9 @@ struct AIEReconstructRoutingPass :
     }
 
     // write json to file
-    std::ofstream outFile("route_summary.json");
+    std::ofstream outFile("build/post_compile_routing_summary.json");
     if (!outFile.is_open()) {
-        llvm::errs() << "Could not open route_summary.json for writing\n";
+        llvm::errs() << "Could not open build/post_compile_routing_summary.json for writing\n";
         return;
     }
     outFile << output.dump(2);
