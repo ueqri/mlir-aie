@@ -17,9 +17,12 @@ struct AIEExtractObjectFifoPass
     int id = 0;
 
     json output;
+    output["pre_alloc_buffers"] = json::array();
     output["nodes"] = json::array();
     output["nets"] = json::array();
     output["links"] = json::array();
+    output["cascades"] = json::array();
+    output["pre_alloc_intra_nets"] = json::array();
 
     DenseMap<Value, int> tileIdMap;
     for (auto tileOp : device.getOps<TileOp>()) {
@@ -37,6 +40,28 @@ struct AIEExtractObjectFifoPass
           {"row_y", row}};
       output["nodes"].push_back(node);
       tileIdMap[tileOp.getResult()] = id++;
+    }
+
+    DenseMap<Value, std::vector<int64_t>> bufferMap;
+
+    for (auto buffer : device.getOps<BufferOp>()) {
+      int64_t bufferSize = buffer.getAllocationSize();
+      auto tile = buffer.getTileOp();
+      bufferMap[tile.getResult()].push_back(bufferSize);
+    }
+
+    for (auto &[tileVal, sizes] : bufferMap) {
+      int nodeId = tileIdMap[tileVal];
+      int64_t totalSize = 0;
+      for (auto s : sizes)
+        totalSize += s;
+
+      json buf = {
+        {"node_id", nodeId},
+        {"sizes_bytes", sizes},
+        {"total_size_bytes", totalSize}
+      };
+      output["pre_alloc_buffers"].push_back(buf);
     }
 
     id = 0;
@@ -128,7 +153,7 @@ struct AIEExtractObjectFifoPass
         {"depth", depth},
         {"byte_size_per_depth", byteSize}
       };
-      output["pre_alloc_buffers"].push_back(alloc);
+      output["pre_alloc_intra_nets"].push_back(alloc);
     }
 
     // write json to file
