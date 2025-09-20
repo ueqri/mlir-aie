@@ -10,6 +10,11 @@ using namespace xilinx;
 using namespace xilinx::AIE;
 using json = nlohmann::ordered_json;
 
+static llvm::cl::opt<std::string> jsonFilePath(
+    "output-netlist-file",
+    llvm::cl::desc("Path to JSON netlist"),
+    llvm::cl::init("netlist.json"));
+
 struct AIEExtractObjectFifoPass
     : AIEExtractObjectFifoBase<AIEExtractObjectFifoPass> {
   void runOnOperation() override {
@@ -102,9 +107,10 @@ struct AIEExtractObjectFifoPass
     }
 
     // write json to file
-    std::ofstream outFile("netlist.json");
+    std::ofstream outFile(jsonFilePath);
     if (!outFile.is_open()) {
-        llvm::errs() << "Could not open netlist.json for writing\n";
+        llvm::errs() << "Error: Could not open " << jsonFilePath
+                     << " for writing\n";
         return;
     }
     outFile << output.dump(2);
