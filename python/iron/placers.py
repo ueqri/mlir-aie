@@ -195,11 +195,11 @@ class SAPlacer(Placer):
         )
         if self._pnr_args is not None:
             pnr_cmd += f" {self._pnr_args}"
-        print(f"Running pnr: {pnr_cmd}", file=sys.stderr)
+        print(f"Placing and routing: {pnr_cmd} ...", file=sys.stderr, flush=True)
         cwd = os.getcwd()
         pnr = subprocess_run_cmd(pnr_cmd, cwd=cwd)
         pnr.check()
-        print("Finished pnr", file=sys.stderr)
+        print("Finished placing and routing ...", file=sys.stderr, flush=True)
         # Load placed netlist
         with open("build/pnr_placed_netlist.json", "r") as f:
             placed_data = json.load(f)

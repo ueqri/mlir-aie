@@ -1224,12 +1224,16 @@ class FlowRunner:
             await asyncio.gather(*processes)
 
             if opts.routing_summary:
+                import os
+                output_path = os.path.join(os.path.dirname(os.path.dirname(input_physical)), os.path.basename(input_physical))
                 await self.do_call(
                     None,
                     [
                         "aie-opt",
                         "--aie-reconstruct-routing",
                         input_physical,
+                        "-o",
+                        output_path,
                     ],
                     force=True,
                 )

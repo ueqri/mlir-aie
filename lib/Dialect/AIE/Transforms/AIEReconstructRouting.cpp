@@ -241,13 +241,9 @@ struct AIEReconstructRoutingPass :
           int shareDir = isProd ? -1 : 1;
 
           // Check if overwriting existing entry
-          if (sharedMemConnect.count(edge)) {
-            llvm::errs() << "Overwriting shared mem connection between ("
-                        << edge.first.getCol() << "," << edge.first.getRow() << ") and ("
-                        << edge.second.getCol() << "," << edge.second.getRow() << ")\n";
+          if (sharedMemConnect.count(edge) == 0) {
+            sharedMemConnect[edge] = shareDir;
           }
-
-          sharedMemConnect[edge] = shareDir;
         }
       });
     }
@@ -263,15 +259,15 @@ struct AIEReconstructRoutingPass :
     }
 
     // write json to file
-    std::ofstream outFile("build/post_compile_routing_summary.json");
+    std::ofstream outFile("post_compile_routing_summary.json");
     if (!outFile.is_open()) {
-        llvm::errs() << "Could not open build/post_compile_routing_summary.json for writing\n";
+        llvm::errs() << "Could not open post_compile_routing_summary.json for writing\n";
         return;
     }
     outFile << output.dump(2);
     outFile.close();
 
-    llvm::outs() << "Route summary written to route_summary.json\n";
+    llvm::dbgs() << "Route summary written to post_compile_routing_summary.json\n";
   }
 };
 
