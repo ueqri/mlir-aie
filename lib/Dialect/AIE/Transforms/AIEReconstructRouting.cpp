@@ -11,21 +11,32 @@ using namespace xilinx;
 using namespace xilinx::AIE;
 using json = nlohmann::ordered_json;
 
+typedef struct MaskValue {
+  int mask;
+  int value;
+} MaskValue;
+
 typedef struct PortConnection {
   Operation *op;
   Port port;
 } PortConnection;
 
+typedef struct PortMaskValue {
+  Port port;
+  MaskValue mv;
+} PortMaskValue;
+
 typedef struct WorkItem {
   Operation *op;
   Port port;
   std::vector<TileOp> currentPath;
+  MaskValue mv;
 } WorkItem;
 
 typedef struct Path {
   TileOp srcTile;
   std::vector<TileOp> dstTiles;
-  std::vector<std::vector<TileOp>> paths;
+  std::vector<std::pair<std::vector<TileOp>, MaskValue>> paths;
 
   Path(TileOp src) : srcTile(src) {}
 } Path;
@@ -62,18 +73,48 @@ private:
     return std::nullopt;
   }
   
-  std::vector<Port> getConnectionsThroughSwitchbox(Region &r, Port sourcePort) {
+  std::vector<PortMaskValue> getConnectionsThroughSwitchbox(Region &r, Port sourcePort) {
     LLVM_DEBUG(llvm::dbgs() << "Switchbox:\n");
     Block &b = r.front();
-    std::vector<Port> portSet;
+    std::vector<PortMaskValue> portSet;
     for (auto connectOp : b.getOps<ConnectOp>()) {
       if (connectOp.sourcePort() == sourcePort) {
-        portSet.push_back(connectOp.destPort());
+        MaskValue maskValue = {0, 0};
+        portSet.push_back({connectOp.destPort(), maskValue});
         LLVM_DEBUG(llvm::dbgs() << "To:" << stringifyWireBundle(connectOp.destPort().bundle)
                 << " " << connectOp.destPort().channel << "\n");
       }
     }
+    for (auto connectOp : b.getOps<PacketRulesOp>()) {
+      if (connectOp.sourcePort() == sourcePort) {
+        LLVM_DEBUG(llvm::dbgs()
+                   << "Packet From: "
+                   << stringifyWireBundle(connectOp.sourcePort().bundle) << " "
+                   << sourcePort.channel << "\n");
+        for (auto masterSetOp : b.getOps<MasterSetOp>()) 
+          for (Value amsel : masterSetOp.getAmsels())
+            for (auto ruleOp : connectOp.getRules().front().getOps<PacketRuleOp>()) {
+              if (ruleOp.getAmsel() == amsel) {
+                LLVM_DEBUG(llvm::dbgs()
+                           << "To:"
+                           << stringifyWireBundle(masterSetOp.destPort().bundle)
+                           << " " << masterSetOp.destPort().channel << "\n");
+                MaskValue maskValue = {ruleOp.maskInt(), ruleOp.valueInt()};
+                portSet.push_back({masterSetOp.destPort(), maskValue});
+              }
+            }
+      }
+    }
     return portSet;
+  }
+
+  std::optional<MaskValue> matchMask(const MaskValue &curr, const MaskValue &next) const {
+    int maskConflicts = next.mask & curr.mask;
+    if ((maskConflicts & next.value) != (maskConflicts & curr.value))
+      return std::nullopt;
+    MaskValue newMaskValue = {curr.mask | next.mask,
+                              curr.value | (next.mask & next.value)};
+    return newMaskValue;
   }
 
 public: 
@@ -86,7 +127,7 @@ public:
       return pathInfo; // no connections, return
 
     std::vector<WorkItem> worklist;
-    worklist.push_back({firstConn->op, firstConn->port, {tileOp}});
+    worklist.push_back({firstConn->op, firstConn->port, {tileOp}, {0, 0}});
 
     while(!worklist.empty()) {
       WorkItem wItem = worklist.back();
@@ -113,30 +154,36 @@ public:
         auto dstTileOp = dyn_cast<TileOp>(other);
         if (dstTileOp) {
           pathInfo.dstTiles.push_back(dstTileOp);
-          pathInfo.paths.push_back(currentPath);
+          pathInfo.paths.push_back({currentPath, wItem.mv});
         }
       } else if (auto switchOp = dyn_cast_or_null<SwitchboxOp>(other)) {
-        auto nextPorts = getConnectionsThroughSwitchbox(
+        auto nextPortMVs = getConnectionsThroughSwitchbox(
                             switchOp.getConnections(), otherPort);
         // need to add next ports to check
-        for (auto &port : nextPorts) {
-          auto nextConnection = getConnectionThroughWire(switchOp, port);
+        for (auto &portMV : nextPortMVs) {
+          auto mergedMV = matchMask(wItem.mv, portMV.mv);
+          if (!mergedMV)
+            continue;
+          auto nextConnection = getConnectionThroughWire(switchOp, portMV.port);
           if (nextConnection) {
             // clone path for each branch
             auto newPath = currentPath;
-            worklist.push_back({nextConnection->op, nextConnection->port, newPath});
+            worklist.push_back({nextConnection->op, nextConnection->port, newPath, *mergedMV});
           }
         }
       } else if (auto switchOp = dyn_cast_or_null<ShimMuxOp>(other)) {
-        auto nextPorts = getConnectionsThroughSwitchbox(
+        auto nextPortMVs = getConnectionsThroughSwitchbox(
                             switchOp.getConnections(), otherPort);
         // need to add next ports to check
-        for (auto &port : nextPorts) {
-          auto nextConnection = getConnectionThroughWire(switchOp, port);
+        for (auto &portMV : nextPortMVs) {
+          auto mergedMV = matchMask(wItem.mv, portMV.mv);
+          if (!mergedMV)
+            continue;
+          auto nextConnection = getConnectionThroughWire(switchOp, portMV.port);
           if (nextConnection) {
             // clone path for each branch
             auto newPath = currentPath;
-            worklist.push_back({nextConnection->op, nextConnection->port, newPath});
+            worklist.push_back({nextConnection->op, nextConnection->port, newPath, *mergedMV});
           }
         }
       }
@@ -156,6 +203,7 @@ struct AIEReconstructRoutingPass :
     output["buffers"] = json::array();
     output["cct_routes"] = json::array();
     output["nbr_routes"] = json::array();
+    output["pkt_routes"] = json::array();
     
     // Map of (col, row) to list of allocated buffers
     std::map<std::pair<int, int>, std::vector<int64_t>> bufferMap;
@@ -189,10 +237,14 @@ struct AIEReconstructRoutingPass :
       // Perform analysis on each tile
       for (WireBundle bundle : bundles) {
         for (size_t i = 0; i < tile.getNumSourceConnections(bundle); i++) {
-          Path pInfo = analysis.getPathInfo(tile, {bundle, i});
+          Path pInfo = analysis.getPathInfo(tile, {bundle, (int)i});
           std::vector<std::vector<std::pair<int, int>>> routes;
+          bool isPkt = true;
           if (!pInfo.paths.empty()) {
-            for (auto path : pInfo.paths) {
+            for (auto &[path, mv] : pInfo.paths) {
+              if (mv.mask == 0 && mv.value == 0) {
+                isPkt = false;
+              }
               std::vector<std::pair<int, int>> route;
               for (auto t : path) {
                 route.push_back({t.getCol(), t.getRow()});
@@ -218,7 +270,11 @@ struct AIEReconstructRoutingPass :
               intermediatesArray.push_back(routeJson);
             }
             routeGroup["intermediates"] = intermediatesArray;
-            output["cct_routes"].push_back(routeGroup);
+            if (isPkt) {
+              output["pkt_routes"].push_back(routeGroup);
+            } else {
+              output["cct_routes"].push_back(routeGroup);
+            }
           }
         }
       }
