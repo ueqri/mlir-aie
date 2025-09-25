@@ -525,11 +525,14 @@ struct AIEObjectFifoStatefulTransformPass
   void createBd(OpBuilder &builder, LockOp acqLock, int acqMode,
                 LockAction acqLockAction, LockOp relLock, int relMode,
                 MyOp buff, int offset, int len, Block *succ,
-                BDDimLayoutArrayAttr dims, BDPadLayoutArrayAttr padDimensions) {
+                BDDimLayoutArrayAttr dims, BDPadLayoutArrayAttr padDimensions,
+                std::optional<PacketInfoAttr> bdPacket) {
     if (acqLock)
       builder.create<UseLockOp>(builder.getUnknownLoc(), acqLock, acqLockAction,
                                 acqMode);
-
+    if (bdPacket)
+      builder.create<DMABDPACKETOp>(builder.getUnknownLoc(), bdPacket->getPktType(),
+                                    bdPacket->getPktId());
     if (!dims.getValue().empty() && padDimensions) {
       builder.create<DMABDOp>(builder.getUnknownLoc(), buff, offset, len, dims,
                               padDimensions);
@@ -553,6 +556,7 @@ struct AIEObjectFifoStatefulTransformPass
                      DMAChannelDir channelDir, size_t lockIndex, Block *succ,
                      BDDimLayoutArrayAttr dims,
                      BDPadLayoutArrayAttr padDimensions,
+                     std::optional<PacketInfoAttr> bdPacket,
                      bool distribOrJoin = false) {
     LockOp acqLock;
     LockOp relLock;
@@ -586,26 +590,27 @@ struct AIEObjectFifoStatefulTransformPass
       }
     }
     createBd(builder, acqLock, acqMode, acqLockAction, relLock, relMode, buff,
-             offset, len, succ, dims, padDimensions);
+             offset, len, succ, dims, padDimensions, bdPacket);
   }
 
   /// Function that either calls createAIETileDMA(), createShimDMA() or
   /// createMemTileDMA() based on op tile row value.
   void createDMA(DeviceOp &device, OpBuilder &builder, ObjectFifoCreateOp op,
                  DMAChannelDir channelDir, int channelIndex, int lockMode,
-                 BDDimLayoutArrayAttr dims, BDPadLayoutArrayAttr pad_dims) {
+                 BDDimLayoutArrayAttr dims, BDPadLayoutArrayAttr pad_dims,
+                 std::optional<PacketInfoAttr> bdPacket) {
     if (op.getProducerTileOp().isShimTile()) {
       createShimDMA(device, builder, op, channelDir, channelIndex, lockMode,
-                    dims);
+                    dims, bdPacket);
     } else if (op.getProducerTileOp().isMemTile()) {
       BDPadLayoutArrayAttr padDims = nullptr;
       if (channelDir == DMAChannelDir::MM2S && pad_dims)
         padDims = pad_dims;
       createMemTileDMA(device, builder, op, channelDir, channelIndex, lockMode,
-                       dims, padDims);
+                       dims, padDims, bdPacket);
     } else {
       createAIETileDMA(device, builder, op, channelDir, channelIndex, lockMode,
-                       dims);
+                       dims, bdPacket);
     }
   }
 
@@ -614,7 +619,8 @@ struct AIEObjectFifoStatefulTransformPass
   void createAIETileDMA(DeviceOp &device, OpBuilder &builder,
                         ObjectFifoCreateOp op, DMAChannelDir channelDir,
                         int channelIndex, int lockMode,
-                        BDDimLayoutArrayAttr dims) {
+                        BDDimLayoutArrayAttr dims,
+                        std::optional<PacketInfoAttr> bdPacket) {
     size_t numBlocks = op.size();
     if (numBlocks == 0)
       return;
@@ -700,7 +706,7 @@ struct AIEObjectFifoStatefulTransformPass
         createBdBlock<BufferOp>(builder, target, lockMode, acqNum, relNum,
                                 buffersPerFifo[target][elemIndex], /*offset*/ 0,
                                 len, channelDir, elemIndex, succ, dims,
-                                nullptr);
+                                nullptr, bdPacket);
         curr = succ;
         totalBlocks++;
       }
@@ -713,7 +719,8 @@ struct AIEObjectFifoStatefulTransformPass
   void createShimDMA(DeviceOp &device, OpBuilder &builder,
                      ObjectFifoCreateOp op, DMAChannelDir channelDir,
                      int channelIndex, int lockMode,
-                     BDDimLayoutArrayAttr dims) {
+                     BDDimLayoutArrayAttr dims,
+                     std::optional<PacketInfoAttr> bdPacket) {
     size_t numBlocks = externalBuffersPerFifo[op].size();
     if (numBlocks == 0)
       return;
@@ -776,7 +783,7 @@ struct AIEObjectFifoStatefulTransformPass
       createBdBlock<ExternalBufferOp>(builder, op, lockMode, acqNum, relNum,
                                       externalBuffersPerFifo[op][elemIndex],
                                       /*offset*/ 0, len, channelDir, elemIndex,
-                                      succ, dims, nullptr);
+                                      succ, dims, nullptr, bdPacket);
       curr = succ;
       elemIndex++;
     }
@@ -788,7 +795,8 @@ struct AIEObjectFifoStatefulTransformPass
                         ObjectFifoCreateOp op, DMAChannelDir channelDir,
                         int channelIndex, int lockMode,
                         BDDimLayoutArrayAttr dims,
-                        BDPadLayoutArrayAttr padDimensions) {
+                        BDPadLayoutArrayAttr padDimensions,
+                        std::optional<PacketInfoAttr> bdPacket) {
     size_t numBlocks = op.size();
     if (numBlocks == 0)
       return;
@@ -949,7 +957,7 @@ struct AIEObjectFifoStatefulTransformPass
         createBdBlock<BufferOp>(builder, target, lockMode, acqNum, relNum,
                                 buffersPerFifo[target][elemIndex], offset,
                                 lenOut, channelDir, lockIndex, succ, dims,
-                                padDimensions, distribOrJoin);
+                                padDimensions, bdPacket, distribOrJoin);
         curr = succ;
         totalBlocks++;
       }
@@ -1406,12 +1414,16 @@ struct AIEObjectFifoStatefulTransformPass
   void createObjectFifoAllocationInfo(OpBuilder &builder, MLIRContext *ctx,
                                       FlatSymbolRefAttr obj_fifo, int colIndex,
                                       DMAChannelDir channelDir,
-                                      int channelIndex, bool plio) {
+                                      int channelIndex, bool plio,
+                                      std::optional<PacketInfoAttr> packet) {
+    PacketInfoAttr packetInfo = nullptr;
+    if (packet)
+      packetInfo = *packet;
     builder.create<ShimDMAAllocationOp>(builder.getUnknownLoc(), obj_fifo,
                                         DMAChannelDirAttr::get(ctx, channelDir),
                                         builder.getI64IntegerAttr(channelIndex),
                                         builder.getI64IntegerAttr(colIndex),
-                                        builder.getBoolAttr(plio));
+                                        builder.getBoolAttr(plio), packetInfo);
   }
 
   /// Function used to verify that an objectfifo is present in at most one
@@ -1432,6 +1444,18 @@ struct AIEObjectFifoStatefulTransformPass
         objectfifoset.insert(outOf);
       }
     }
+  }
+
+  /// Account for already used packet IDs and return next available ID.
+  int getStartPacketID(DeviceOp &device) {
+    int packetID = 0;
+    for (PacketFlowOp packetflow : device.getOps<PacketFlowOp>()) {
+      if (packetflow.getID() > packetID) {
+        // compute next available ID
+        packetID = packetflow.getID() + 1;
+      }
+    }
+    return packetID;
   }
 
   void runOnOperation() override {
@@ -1589,6 +1613,7 @@ struct AIEObjectFifoStatefulTransformPass
     //===------------------------------------------------------------------===//
     // Only the objectFifos we split above require DMA communication; the others
     // rely on shared memory and share the same buffers.
+    int packetID = getStartPacketID(device);
     for (auto &[producer, consumers] : splitFifos) {
       // create producer tile DMA
       int producerChanIndex = dmaAnalysis.getDMAChannelIndex(
@@ -1597,9 +1622,16 @@ struct AIEObjectFifoStatefulTransformPass
         producer.getProducerTileOp().emitOpError(
             "number of output DMA channel exceeded!");
       DMAChannel producerChan = {DMAChannelDir::MM2S, producerChanIndex};
+
+      std::optional<PacketInfoAttr> bdPacket = {};
+      if (clPacketSwObjectFifos) {
+        bdPacket = {AIE::PacketInfoAttr::get(
+            ctx, /*pkt_type*/ 0, /*pkt_id*/ packetID)};
+        packetID++;
+      }
       createDMA(device, builder, producer, producerChan.direction,
                 producerChan.channel, 0, producer.getDimensionsToStreamAttr(),
-                producer.getPadDimensionsAttr());
+                producer.getPadDimensionsAttr(), bdPacket);
       // generate objectFifo allocation info
       builder.setInsertionPoint(device.getBody()->getTerminator());
 
@@ -1607,7 +1639,22 @@ struct AIEObjectFifoStatefulTransformPass
         createObjectFifoAllocationInfo(
             builder, ctx, SymbolRefAttr::get(ctx, producer.getName()),
             producer.getProducerTileOp().colIndex(), producerChan.direction,
-            producerChan.channel, producer.getPlio());
+            producerChan.channel, producer.getPlio(), bdPacket);
+      
+      PacketFlowOp packetflow;
+      if (clPacketSwObjectFifos) {
+        // create packet flow
+        builder.setInsertionPointAfter(producer);
+        packetflow = builder.create<PacketFlowOp>(
+            builder.getUnknownLoc(),
+            builder.getIntegerAttr(builder.getI8Type(),
+            bdPacket->getPktId()), nullptr, nullptr);
+        {
+          OpBuilder::InsertionGuard g(builder);
+          builder.setInsertionPointToStart(&packetflow.getRegion().emplaceBlock());
+          builder.create<EndOp>(builder.getUnknownLoc());
+        }
+      }
 
       for (auto consumer : consumers) {
 
@@ -1621,7 +1668,7 @@ struct AIEObjectFifoStatefulTransformPass
         BDDimLayoutArrayAttr consumerDims =
             consumer.getDimensionsFromStreamPerConsumer()[0];
         createDMA(device, builder, consumer, consumerChan.direction,
-                  consumerChan.channel, 1, consumerDims, nullptr);
+                  consumerChan.channel, 1, consumerDims, nullptr, {});
         // generate objectFifo allocation info
         builder.setInsertionPoint(device.getBody()->getTerminator());
 
@@ -1638,18 +1685,33 @@ struct AIEObjectFifoStatefulTransformPass
           consumerWireType = WireBundle::DMA;
         }
 
+        if (clPacketSwObjectFifos) {
+          builder.setInsertionPointToStart(&packetflow.getPorts().front());
+          builder.create<PacketDestOp>(builder.getUnknownLoc(),
+                                      consumer.getProducerTile(),
+                                      WireBundle::DMA, consumerChan.channel);
+        }
+        builder.setInsertionPoint(device.getBody()->getTerminator());
         if (consumer.getProducerTileOp().isShimTile())
           createObjectFifoAllocationInfo(
               builder, ctx, SymbolRefAttr::get(ctx, producer.getName()),
               consumer.getProducerTileOp().colIndex(), consumerChan.direction,
-              consumerChan.channel, producer.getPlio());
-
-        // create flow
-        builder.setInsertionPointAfter(producer);
-        builder.create<FlowOp>(builder.getUnknownLoc(),
-                               producer.getProducerTile(), producerWireType,
-                               producerChan.channel, consumer.getProducerTile(),
-                               consumerWireType, consumerChan.channel);
+              consumerChan.channel, producer.getPlio(), {});
+        
+        if (!clPacketSwObjectFifos) {
+          // create flow
+          builder.setInsertionPointAfter(producer);
+          builder.create<FlowOp>(builder.getUnknownLoc(),
+                                 producer.getProducerTile(), producerWireType,
+                                 producerChan.channel, consumer.getProducerTile(),
+                                 consumerWireType, consumerChan.channel);
+        }
+      }
+      if (clPacketSwObjectFifos) {
+        builder.setInsertionPointToStart(&packetflow.getPorts().front());
+        builder.create<PacketSourceOp>(builder.getUnknownLoc(),
+                                      producer.getProducerTile(),
+                                      WireBundle::DMA, producerChan.channel);
       }
     }
 

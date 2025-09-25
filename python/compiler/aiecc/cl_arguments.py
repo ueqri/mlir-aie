@@ -324,6 +324,13 @@ def parse_args(args=None):
         help="Kernel id in xclbin file",
     )
     parser.add_argument(
+        "--packet-sw-objFifos",
+        dest="packet_sw_objFifos",
+        default=False,
+        action="store_true",
+        help="Use packet switched flows when lowering object fifos",
+    )
+    parser.add_argument(
         "--use-pnr-routing",
         dest="pnr_routing",
         default=False,
