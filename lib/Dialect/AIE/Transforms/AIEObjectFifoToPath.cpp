@@ -172,6 +172,26 @@ struct AIEObjectFifoToPathPass : public AIEObjectFifoToPathBase<AIEObjectFifoToP
     return leftShared || rightShared;
   }
 
+  /// Function to retrieve ObjectFifoAllocateOp of ObjectFifoCreateOp,
+  /// if it exists.
+  std::optional<ObjectFifoAllocateOp>
+  getOptionalAllocateOp(ObjectFifoCreateOp op) {
+    ObjectFifoAllocateOp allocOp;
+    auto device = op->getParentOfType<DeviceOp>();
+    bool foundAlloc = false;
+    for (ObjectFifoAllocateOp alloc : device.getOps<ObjectFifoAllocateOp>()) {
+      if (alloc.getObjectFifo() == op) {
+        if (foundAlloc)
+          op.emitOpError("has more than one allocate operation");
+        allocOp = alloc;
+        foundAlloc = true;
+      }
+    }
+    if (foundAlloc)
+      return {allocOp};
+    return {};
+  }
+
   /// Function to retrieve ObjectFifoLinkOp of ObjectFifoCreateOp,
   /// if it belongs to one.
   std::optional<ObjectFifoLinkOp> getOptionalLinkOp(ObjectFifoCreateOp op) {
@@ -328,12 +348,25 @@ struct AIEObjectFifoToPathPass : public AIEObjectFifoToPathBase<AIEObjectFifoToP
     // side (share_dir = -1), we also create the element on the producer tile.
     // Otherwise (share_dir = 1), the element is created on the consumer side.
     TileOp creation_tile;
+    auto consumerTileOp =
+        dyn_cast<TileOp>(op.getConsumerTiles()[0].getDefiningOp());
     if (share_direction == 0 || share_direction == -1)
       creation_tile = op.getProducerTileOp();
-    else {
-      auto consumerTileOp =
-          dyn_cast<TileOp>(op.getConsumerTiles()[0].getDefiningOp());
+    else 
       creation_tile = consumerTileOp;
+
+    std::optional<ObjectFifoAllocateOp> opAlloc = getOptionalAllocateOp(op);
+    if (opAlloc.has_value()) {
+      TileOp delegate = opAlloc->getDelegateTileOp();
+      int prodShareDir;
+      int consShareDir;
+      isSharedMemory(delegate, op.getProducerTileOp(), &prodShareDir);
+      isSharedMemory(delegate, consumerTileOp, &consShareDir);
+      if (prodShareDir == -1 && consShareDir == -1)
+        creation_tile = delegate;
+      else
+        opAlloc->emitOpError("objectfifo has no shared memory access to "
+                             "delegate tile's memory module");
     }
 
     // Reset opbuilder location to after the last tile declaration
@@ -1281,8 +1314,9 @@ struct AIEObjectFifoToPathPass : public AIEObjectFifoToPathBase<AIEObjectFifoToP
           createOp.getDimensionsFromStreamPerConsumer();
       // Only FIFOs using DMA or multi-cast via shared memory 
       // are split into two ends; skip in shared memory one-to-one case
-      if (createOp.getViaSharedMem().has_value() && 
-          createOp.getConsumerTiles().size() <= 1)
+      if ((createOp.getViaSharedMem().has_value() && 
+          createOp.getConsumerTiles().size() <= 1) ||
+          createOp.getVia_DMA() == false) 
         continue;
 
       SmallVector<Value> memOnSrcConsumers;
