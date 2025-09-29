@@ -434,8 +434,7 @@ def AIE_ConnectOp: AIE_Op<"connect", [ParentOneOf<["SwitchboxOp", "ShimMuxOp"]> 
 def AIE_NeighbourPathOp : AIE_Op<"neighbour_path", []> {
   let arguments = (
     ins Index:$source,
-        Variadic<Index>:$dests,
-        OptionalAttr<ArrayAttr>:$via_shared_mems
+        Variadic<Index>:$dests
   );
   let summary = "An explicit path op to indicate using local memory access between cores";
   let description = [{
@@ -1791,9 +1790,6 @@ def AIE_ObjectFifoCreateOp: AIE_Op<"objectfifo", [HasParent<"DeviceOp">, Symbol]
         // disable_synchronization==true will skip lock generation for
         // objectfifo synchronous accesses
         DefaultValuedAttr<BoolAttr, "false">:$disable_synchronization,
-        // via_shared_mem==-1 means use producer tile's memory module
-        // via_shared_mem==1 means use consumer tile's memory module
-        OptionalAttr<ArrayAttr>:$via_shared_mem,
         // repeat_count==1 means "do it once"
         OptionalAttr<ConfinedAttr<AIEI32Attr, [IntMinValue<1>]>>:$repeat_count,
         InitValuesArrayAttr:$initValues,
@@ -1832,25 +1828,6 @@ def AIE_ObjectFifoCreateOp: AIE_Op<"objectfifo", [HasParent<"DeviceOp">, Symbol]
       return getOperation()->getAttrOfType<mlir::StringAttr>(
           mlir::SymbolTable::getSymbolAttrName());
     }
-
-    int sharedMemValue(int index = 0) {
-      if (getViaSharedMem().has_value())
-        return llvm::dyn_cast<mlir::IntegerAttr>(getViaSharedMem().value()[index])
-            .getInt();
-      return -2;
-    }
-
-    int numSharedMemConsumers(int shareDirection) {
-      int count = 0;
-      if (!getViaSharedMem()) return count;
-      auto arrayAttr = getViaSharedMem().value();
-      for (auto attr : arrayAttr) {
-        if (llvm::dyn_cast<mlir::IntegerAttr>(attr).getInt() == shareDirection)
-          count++;
-      }
-      return count;
-    }
-
   }];
 
   let builders = [
@@ -1870,6 +1847,40 @@ def AIE_ObjectFifoCreateOp: AIE_Op<"objectfifo", [HasParent<"DeviceOp">, Symbol]
                             odsBuilder.getAttr<BDDimLayoutArrayArrayAttr>(dimensionsFromStreamPerConsumer));
     }]>
   ];
+}
+
+def AIE_ObjectFifoAllocateOp: AIE_Op<"objectfifo.allocate", [HasParent<"DeviceOp">]> {
+  let summary = "Sets a tile's memory module as the target for an objectfifo's memory allocation";
+  let description = [{
+    Specify a tile's memory module to be used as the allocation target for this objectfifo.
+    Only works if all the objectfifo's tiles, producer and consumers, have shared memory access to
+    the specified tile's memory module.
+
+    In the following example the objects of @of4 will be allocated on %tile14:
+    ```
+      aie.objectfifo @of4 (%tile13, {%tile14}, 2 : i32) : !aie.objectfifo<memref<256xi32>>
+      aie.objectfifo.allocate @of4 (%tile14)
+    ```
+  }];
+
+  let arguments = (
+    ins FlatSymbolRefAttr:$objFifo_name,
+        Variadic<Index>:$delegateTiles
+  );
+
+  let hasCustomAssemblyFormat = 1;
+
+  let assemblyFormat = [{
+    $objFifo_name `(` $delegateTiles `)` attr-dict
+  }];
+
+  let hasVerifier = 1;
+
+  let extraClassDeclaration = [{
+    ObjectFifoCreateOp getObjectFifo();
+    std::vector<TileOp> getDelegateTileOps();
+    int getNumSrcDelegates();
+  }];
 }
 
 def AIE_ObjectFifoLinkOp: AIE_Op<"objectfifo.link", [HasParent<"DeviceOp">]> {

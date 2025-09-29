@@ -418,7 +418,7 @@ class object_fifo(ObjectFifoCreateOp):
         padDimensions=None,
         disable_synchronization=None,
         hop_tile_ids=None,
-        via_shared_mem=None,
+        allocation_tiles=None,
     ):
         self.datatype = try_convert_np_type_to_mlir_type(datatype)
         if not isinstance(consumerTiles, List):
@@ -436,11 +436,6 @@ class object_fifo(ObjectFifoCreateOp):
                     init_val = array("i", e)
                 values.append(DenseElementsAttr.get(init_val, type=self.datatype))
             initValues = _arrayAttr(values, None)
-        if via_shared_mem is not None:
-            values = []
-            for e in via_shared_mem:
-                values.append(IntegerAttr.get(T.i32(), e))
-            via_shared_mem = _arrayAttr(values, None)
         if hop_tile_ids is not None:
             outer_values = []
             for hop_path in hop_tile_ids:  # list[list[list[int]]]
@@ -466,8 +461,10 @@ class object_fifo(ObjectFifoCreateOp):
             disable_synchronization=disable_synchronization,
             initValues=initValues,
             hop_tile_ids=hop_tile_ids,
-            via_shared_mem=via_shared_mem,
         )
+        if allocation_tiles is not None:
+            tile_ops = [tile.op for tile in allocation_tiles]
+            self.allocate(tile_ops)
 
     def acquire(self, port, num_elem):
         subview_t = ObjectFifoSubviewType.get(self.datatype)
@@ -487,14 +484,8 @@ class object_fifo(ObjectFifoCreateOp):
     def release(self, port, num_elem):
         return objectfifo_release(port, self.sym_name.value, num_elem)
 
-    def set_via_shared_mem(self, port):
-        num = 0
-        if port == ObjectFifoPort.Produce:
-            num = 0
-        elif port == ObjectFifoPort.Consume:
-            num = 1
-        int_num = IntegerAttr.get(T.i32(), num)
-        self.attributes["via_shared_mem"] = int_num
+    def allocate(self, tiles):
+        return objectfifo_allocate(self.sym_name.value, tiles)
 
     def set_repeat_count(self, num):
         int_num = IntegerAttr.get(T.i32(), num)

@@ -56,6 +56,7 @@ struct AIEPlaceTilesPass : public AIEPlaceTilesBase<AIEPlaceTilesPass> {
 
     for (size_t i = 0; i < fifoOps.size(); i++) {
       auto fifoOp = fifoOps[i];
+      auto tileOps = llvm::to_vector(device.getOps<TileOp>());
       if (!input["nets"][i].contains("routing_info")) {
         fifoOp.emitError("No routing_info key found in JSON for net " + 
             std::to_string(input["nets"][i]["id"].get<int>()));
@@ -85,21 +86,39 @@ struct AIEPlaceTilesPass : public AIEPlaceTilesBase<AIEPlaceTilesPass> {
         fifoOp.setVia_DMAAttr(builder.getBoolAttr(true));
       }
       else if (route_info["connection_type"] == "neighbor_sharing") {
-        SmallVector<Attribute> shareDirectionAttrs;
-        for (const auto &dir : route_info["share_directions"]) {
-          int shareDirection = dir.get<int>();
-          shareDirectionAttrs.push_back(builder.getIntegerAttr(
-              builder.getI32Type(), shareDirection));
+        SmallVector<Value> delegateTileVals;
+        for (const auto &allocTile : route_info["allocation_tiles"]) {
+          int col = allocTile["col_x"];
+          int row = allocTile["row_y"];
+          bool found = false;
+
+          for (auto tile : tileOps) {
+            if (tile.getCol() == col && tile.getRow() == row) {
+              delegateTileVals.push_back(tile.getResult());
+              found = true;
+              break;
+            }
+          }
+          if (!found) {
+            OpBuilder::InsertionGuard g(builder);
+            builder.setInsertionPointAfter(tileOps.back()); // insert after last existing TileOp
+            auto newTile =
+                builder.create<TileOp>(builder.getUnknownLoc(), col, row);
+            delegateTileVals.push_back(newTile.getResult());
+          }
         }
-        fifoOp.setViaSharedMemAttr(ArrayAttr::get(fifoOp.getContext(), 
-            shareDirectionAttrs));
+        OpBuilder::InsertionGuard g(builder);
+        builder.setInsertionPointAfter(fifoOp);
+        auto symRef = FlatSymbolRefAttr::get(builder.getContext(), fifoOp.getSymName());
+        builder.create<ObjectFifoAllocateOp>(builder.getUnknownLoc(), symRef, delegateTileVals);
       }
       else if (route_info["connection_type"] == "intra_tile") {
-        SmallVector<Attribute> shareDirectionAttrs;
-        shareDirectionAttrs.push_back(builder.getIntegerAttr(
-            builder.getI32Type(), -1));
-        fifoOp.setViaSharedMemAttr(ArrayAttr::get(fifoOp.getContext(), 
-            shareDirectionAttrs));
+        // SmallVector<Attribute> shareDirectionAttrs;
+        // shareDirectionAttrs.push_back(builder.getIntegerAttr(
+        //     builder.getI32Type(), -1));
+        // fifoOp.setViaSharedMemAttr(ArrayAttr::get(fifoOp.getContext(), 
+        //     shareDirectionAttrs));
+        continue;
       }
       else {
         fifoOp.emitError("Unsupported connection type in JSON");

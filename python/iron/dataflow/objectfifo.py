@@ -78,7 +78,7 @@ class ObjectFifo(Resolvable):
         self._resolving = False
         self._via_dma: bool = False
         self._hop_tile_ids: list[list[list[int]]] | None = None
-        self._via_shared_mem: list[int] | None = None
+        self._allocation_tiles: list[Tile] | None = None
 
     @classmethod
     def __get_index(cls) -> int:
@@ -271,8 +271,8 @@ class ObjectFifo(Resolvable):
                 dimensionsFromStreamPerConsumer=dims_from_stream_per_cons,
                 plio=self._plio,
                 via_DMA=self._via_dma,
-                via_shared_mem=self._via_shared_mem,
                 hop_tile_ids=self._hop_tile_ids,
+                allocation_tiles=self._allocation_tiles,
             )
 
             if isinstance(self._prod.endpoint, ObjectFifoLink):
@@ -299,6 +299,13 @@ class ObjectFifo(Resolvable):
             raise ValueError("Must produce at least one element")
         self.op.release(port, num_elem)
 
+    def _allocate(
+        self,
+        tiles: list[Tile],
+    ):  
+        if not isinstance(tiles, list):
+            tiles = [tiles]
+        self._allocation_tiles = tiles
 
 class ObjectFifoHandle(Resolvable):
     """This class represents a handle to an ObjectFifo. A handle may be of type Producer or type Consumer."""
