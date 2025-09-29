@@ -280,8 +280,7 @@ struct AIEReconstructRoutingPass :
       }
     }
 
-    //std::set<Connection, ConnectionComparator> sharedMemConnect;
-    std::map<std::pair<TileOp, TileOp>, int> sharedMemConnect;
+    std::map<std::pair<TileOp, TileOp>, TileOp> sharedMemConnect;
     for (auto coreOp : device.getOps<CoreOp>()) {
       auto coreTileOp = coreOp.getTileOp();
       
@@ -294,22 +293,21 @@ struct AIEReconstructRoutingPass :
           // Determine connection direction depending on if it's producer lock
           std::pair<TileOp, TileOp> edge = isProd ? std::make_pair(lockTileOp, coreTileOp)
                                                   : std::make_pair(coreTileOp, lockTileOp);
-          int shareDir = isProd ? -1 : 1;
 
           // Check if overwriting existing entry
           if (sharedMemConnect.count(edge) == 0) {
-            sharedMemConnect[edge] = shareDir;
+            sharedMemConnect[edge] = lockTileOp;
           }
         }
       });
     }
 
-    for (auto &[tiles, shareDir] : sharedMemConnect) {
+    for (auto &[tiles, allocTile] : sharedMemConnect) {
       auto [srcTile, dstTile] = tiles;
       json connJson = {
         {"src", {{"col_x", srcTile.getCol()}, {"row_y", srcTile.getRow()}}},
         {"dst", {{"col_x", dstTile.getCol()}, {"row_y", dstTile.getRow()}}},
-        {"share_direction", shareDir}
+        {"allocation_tiles", {{"col_x", allocTile.getCol()}, {"row_y", allocTile.getRow()}}}
       };
       output["nbr_routes"].push_back(connJson);
     }

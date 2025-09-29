@@ -192,13 +192,16 @@ struct AIEObjectFifoToPathPass : public AIEObjectFifoToPathBase<AIEObjectFifoToP
                    std::string name, Value prodTile, Value consTile,
                    Attribute depth, BDDimLayoutArrayAttr dimensionsToStream,
                    BDDimLayoutArrayArrayAttr dimensionsFromStreamPerConsumer,
-                   ArrayAttr viaSharedMem = nullptr) {
+                   bool allocate = false) {
     auto ofName = builder.getStringAttr(name);
     auto fifo = builder.create<ObjectFifoCreateOp>(
         builder.getUnknownLoc(), ofName, prodTile, consTile, depth, datatype,
         dimensionsToStream, dimensionsFromStreamPerConsumer);
-    if (viaSharedMem)
-      fifo.setViaSharedMemAttr(viaSharedMem);
+    if (allocate) {
+      auto symRef = FlatSymbolRefAttr::get(builder.getContext(), fifo.getSymName());
+      builder.create<ObjectFifoAllocateOp>(builder.getUnknownLoc(), symRef, 
+                                           ArrayRef<Value>{consTile});
+    }
     return fifo;
   }
 
@@ -221,7 +224,8 @@ struct AIEObjectFifoToPathPass : public AIEObjectFifoToPathBase<AIEObjectFifoToP
         numElem = externalBuffersPerFifo[op].size();
     }
     int numConsumers = 1;
-    if (op.getViaSharedMem().has_value())
+    std::optional<ObjectFifoAllocateOp> opAlloc = getOptionalAllocateOp(op);
+    if (opAlloc.has_value() && opAlloc->getNumSrcDelegates() > 1)
       numConsumers = op.getConsumerTiles().size();
     // create corresponding aie2 locks
     for (int c = 0; c < numConsumers; c++) {
@@ -335,7 +339,11 @@ struct AIEObjectFifoToPathPass : public AIEObjectFifoToPathBase<AIEObjectFifoToP
           dyn_cast<TileOp>(op.getConsumerTiles()[0].getDefiningOp());
       creation_tile = consumerTileOp;
     }
-
+    std::optional<ObjectFifoAllocateOp> opAlloc = getOptionalAllocateOp(op);
+    if (opAlloc.has_value() && opAlloc->getDelegateTileOps().size() == 1) {
+      TileOp delegate = opAlloc->getDelegateTileOps()[0];
+      creation_tile = delegate;
+    }
     // Reset opbuilder location to after the last tile declaration
     Operation *t = nullptr;
     auto dev = op->getParentOfType<DeviceOp>();
@@ -1222,8 +1230,14 @@ struct AIEObjectFifoToPathPass : public AIEObjectFifoToPathBase<AIEObjectFifoToP
   // core must process its own lock index within the FIFO. If FIFO is single cast
   // returns index 0.
   SmallVector<int> getLockIndices(ObjectFifoCreateOp op, TileOp coreTile, TileOp fifoProdTile) {
+    std::optional<ObjectFifoAllocateOp> opAlloc = getOptionalAllocateOp(op);
+    // one-to-one or one-to-many DMAs should not have allocate (for now)
+    if (!opAlloc.has_value())
+      return {0};
+
+    auto delegates = opAlloc->getDelegateTileOps();
     SmallVector<int> lockIndices;
-    if (op.numSharedMemConsumers(-1) > 1) {
+    if (delegates.size() > 1) {
       if (coreTile == fifoProdTile) {
         // Producer core with mem-on-src for multiple consumers
         // process all locks
@@ -1243,10 +1257,30 @@ struct AIEObjectFifoToPathPass : public AIEObjectFifoToPathBase<AIEObjectFifoToP
       }
     }
     else {
-      // one-to-one DMA or mem-on-sink FIFO
+      // one-to-one/one-to-many DMA or mem-on-sink FIFO
       lockIndices.push_back(0);
     }
     return lockIndices;  
+  }
+
+  /// Function to retrieve ObjectFifoAllocateOp of ObjectFifoCreateOp,
+  /// if it exists.
+  std::optional<ObjectFifoAllocateOp>
+  getOptionalAllocateOp(ObjectFifoCreateOp op) {
+    ObjectFifoAllocateOp allocOp;
+    auto device = op->getParentOfType<DeviceOp>();
+    bool foundAlloc = false;
+    for (ObjectFifoAllocateOp alloc : device.getOps<ObjectFifoAllocateOp>()) {
+      if (alloc.getObjectFifo() == op) {
+        if (foundAlloc)
+          op.emitOpError("has more than one allocate operation");
+        allocOp = alloc;
+        foundAlloc = true;
+      }
+    }
+    if (foundAlloc)
+      return {allocOp};
+    return {};
   }
 
   void runOnOperation() override {
@@ -1277,18 +1311,21 @@ struct AIEObjectFifoToPathPass : public AIEObjectFifoToPathBase<AIEObjectFifoToP
       std::vector<ObjectFifoCreateOp> splitConsumerFifos;
       int consumerIndex = 0;
       auto producerTile = createOp.getProducerTile();
+      auto producerTileOp = createOp.getProducerTileOp();
       ArrayRef<BDDimLayoutArrayAttr> consumerDims =
           createOp.getDimensionsFromStreamPerConsumer();
+      std::optional<ObjectFifoAllocateOp> opAlloc =
+          getOptionalAllocateOp(createOp);
       // Only FIFOs using DMA or multi-cast via shared memory 
       // are split into two ends; skip in shared memory one-to-one case
-      if (createOp.getViaSharedMem().has_value() && 
+      if (!createOp.getVia_DMA() && 
           createOp.getConsumerTiles().size() <= 1)
         continue;
 
       SmallVector<Value> memOnSrcConsumers;
       for (auto consumerTile : createOp.getConsumerTiles()) {
-        if (createOp.getViaSharedMem().has_value() &&
-            createOp.sharedMemValue(consumerIndex) == -1) {
+        if (!createOp.getVia_DMA() && opAlloc.has_value() && 
+            opAlloc->getDelegateTileOps()[consumerIndex] == producerTileOp) {
           memOnSrcConsumers.push_back(consumerTile);
           consumerIndex++;
           continue;
@@ -1300,7 +1337,6 @@ struct AIEObjectFifoToPathPass : public AIEObjectFifoToPathBase<AIEObjectFifoToP
 
         // Fifo creation parameters
         auto datatype = llvm::cast<AIEObjectFifoType>(createOp.getElemType());
-        ArrayAttr viaSharedMem = nullptr;
         std::string conSuffix;
         int consumerDepth = createOp.size();
         std::string consumerFifoName;
@@ -1313,16 +1349,10 @@ struct AIEObjectFifoToPathPass : public AIEObjectFifoToPathBase<AIEObjectFifoToP
             consumerDepth = findObjectFifoSize(device, consumerTileOp, createOp);
           }
           conSuffix = "_cons";
-        } else if (createOp.getViaSharedMem().has_value()) {
-          // Share direction has to be on consumer -> 1
+        } else {
           conSuffix = "_nbr_sink";
           consumerDepth = createOp.size();
-          int shareDir = createOp.sharedMemValue(consumerIndex);
-          IntegerAttr intAttr = builder.getI32IntegerAttr(shareDir);
-          viaSharedMem = builder.getArrayAttr({intAttr});
-        } else {
-          llvm_unreachable("Neither via_DMA nor shared_mem set for fifo.");
-        }
+        } 
 
         auto consumerObjFifoSize =
             builder.getIntegerAttr(builder.getI32Type(), consumerDepth);
@@ -1346,13 +1376,14 @@ struct AIEObjectFifoToPathPass : public AIEObjectFifoToPathBase<AIEObjectFifoToP
         if (createOp.getVia_DMA()) {
           consumerFifo = createObjectFifo(
               builder, datatype, consumerFifoName, consumerTile, consumerTile,
-              consumerObjFifoSize, emptyDims, fromStreamDims, viaSharedMem);
+              consumerObjFifoSize, emptyDims, fromStreamDims);
         }
         else {
           consumerFifo = createObjectFifo(
               builder, datatype, consumerFifoName, producerTile, consumerTile,
-              consumerObjFifoSize, emptyDims, fromStreamDims, viaSharedMem);
+              consumerObjFifoSize, emptyDims, fromStreamDims, true);
         }
+
         if (createOp.getDisableSynchronization())
           consumerFifo.setDisableSynchronization(true);
         replaceSplitFifo(createOp, consumerFifo, consumerTileOp);
@@ -1377,15 +1408,10 @@ struct AIEObjectFifoToPathPass : public AIEObjectFifoToPathBase<AIEObjectFifoToP
       }
       
       if (!splitConsumerFifos.empty()) {
-        if (createOp.getViaSharedMem().has_value()) {
+        if (!createOp.getVia_DMA()) {
           splitNbrFifos.emplace_back(createOp, splitConsumerFifos);
           // update original fifo to be only mem-on-src consumers
           createOp.getConsumerTilesMutable().assign(memOnSrcConsumers);
-          if (createOp.numSharedMemConsumers(-1) != (int)createOp.getConsumerTiles().size())
-            createOp.emitOpError("No. of mem-on-src consumers ") 
-                                 << createOp.numSharedMemConsumers(-1)
-                                 << " should match no. of consumers "
-                                 << createOp.getConsumerTiles().size();
         } 
         else
           splitDmaFifos.emplace_back(createOp, splitConsumerFifos);
@@ -1450,13 +1476,8 @@ struct AIEObjectFifoToPathPass : public AIEObjectFifoToPathBase<AIEObjectFifoToP
       // if using 1-to-1 shared_memory, PnR decides if buffer will be on producer or
       // consumer side. Shared memory FIFOs with multiple consumers have to be
       // mem-on-src consumers, therefore direction = -1
-      if (createOp.getViaSharedMem().has_value()) {
-        if (createOp.numSharedMemConsumers(-1) > 1) {
+      if (!createOp.getVia_DMA()) {
           createObjectFifoElements(builder, lockAnalysis, createOp, -1);
-        }
-        else
-          createObjectFifoElements(builder, lockAnalysis, createOp,
-                                   createOp.sharedMemValue(0));
       }
       else {
         // check if split fifo is the copy or original; 
@@ -1555,15 +1576,14 @@ struct AIEObjectFifoToPathPass : public AIEObjectFifoToPathBase<AIEObjectFifoToP
     //===------------------------------------------------------------------===//
     // Create neighbour path ops TODO: see if we should keep this
     //===------------------------------------------------------------------===//
-    for (auto createOp : device.getOps<ObjectFifoCreateOp>()) {
-      if (createOp.getViaSharedMem().has_value()) {
-        builder.setInsertionPointAfter(createOp);
-        builder.create<NeighbourPathOp>(builder.getUnknownLoc(), 
-                                        createOp.getProducerTile(),
-                                        createOp.getConsumerTiles(),
-                                        createOp.getViaSharedMem().value());
-      }
-    }
+    // for (auto createOp : device.getOps<ObjectFifoCreateOp>()) {
+    //   if (createOp.getViaSharedMem().has_value()) {
+    //     builder.setInsertionPointAfter(createOp);
+    //     builder.create<NeighbourPathOp>(builder.getUnknownLoc(), 
+    //                                     createOp.getProducerTile(),
+    //                                     createOp.getConsumerTiles());
+    //   }
+    // }
     //===------------------------------------------------------------------===//
     // Statically unroll for loops 
     //===------------------------------------------------------------------===//
@@ -1802,7 +1822,7 @@ struct AIEObjectFifoToPathPass : public AIEObjectFifoToPathBase<AIEObjectFifoToP
     device.walk([&](Operation *op) {
       if (isa<ObjectFifoCreateOp, ObjectFifoLinkOp,
               ObjectFifoRegisterExternalBuffersOp, ObjectFifoAcquireOp,
-              ObjectFifoSubviewAccessOp, ObjectFifoReleaseOp>(op))
+              ObjectFifoSubviewAccessOp, ObjectFifoReleaseOp, ObjectFifoAllocateOp>(op))
         opsToErase.insert(op);
     });
     SmallVector<Operation *> sorted{opsToErase.begin(), opsToErase.end()};

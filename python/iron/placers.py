@@ -226,9 +226,18 @@ class SAPlacer(Placer):
                 of._via_dma = True
                 of._hop_tile_ids = routing["intermediates"]
             elif routing["connection_type"] == "neighbor_sharing":
-                of._via_shared_mem = routing["share_directions"]
+                alloc_tiles = []
+                for tile_loc in routing["allocation_tiles"]:
+                    coord = (tile_loc["col_x"], tile_loc["row_y"])
+                    if coord not in coord_to_tile:
+                        t = Tile(*coord)
+                        coord_to_tile[coord] = t
+                        device.resolve_tile(t)
+                    alloc_tiles.append(coord_to_tile[coord])
+                of._allocate(alloc_tiles)
             elif routing["connection_type"] == "intra_tile":
-                of._via_shared_mem = [-1]
+                # TODO: apply allocate to other connection types
+                continue
             else:
                 raise ValueError(f"Unknown connection type {routing['connection_type']}")
         # Place buffers for workers
