@@ -1,0 +1,133 @@
+{ "switchbox_settings": [
+    {
+        "col_x": 0,
+        "row_y": 0,
+        "amsels": [
+            {
+                "ams_id": 0,
+                "arbiter_id": 0,
+                "select": 0
+            },
+            {
+                "ams_id": 1,
+                "arbiter_id": 1,
+                "select": 0
+            }
+        ],
+        "mastersets": [
+            {
+                "dst_bundle": "North",
+                "dst_channel": 0,
+                "amsel_ids": [0]
+            },
+            {
+                "dst_bundle": "DMA",
+                "dst_channel": 0,
+                "amsel_ids": [1]
+            }
+        ],
+        "packet_rules": [
+            {
+                "src_bundle": "DMA",
+                "src_channel": 0,
+                "rules": [
+                    {
+                        "mask": 31,
+                        "value": 0,
+                        "amsel_id": 0
+                    },
+                    {
+                        "mask": 31,
+                        "value": 16,
+                        "amsel_id": 0
+                    }
+                ]
+            },
+            {
+                "src_bundle": "North",
+                "src_channel": 0,
+                "rules": [
+                    {
+                        "mask": 31,
+                        "value": 1,
+                        "amsel_id": 1
+                    }
+                ]
+            }
+        ],
+        "connections": [
+            {
+                "src_bundle": "DMA",
+                "src_channel": 1,
+                "dst_bundle": "North",
+                "dst_channel": 1
+            }
+        ]
+    },
+    {
+        "col_x": 0,
+        "row_y": 1,
+        "amsels": [
+            {
+                "ams_id": 0,
+                "arbiter_id": 0,
+                "select": 0
+            },
+            {
+                "ams_id": 1,
+                "arbiter_id": 1,
+                "select": 0
+            }
+        ],
+        "mastersets": [
+            {
+                "dst_bundle": "DMA",
+                "dst_channel": 0,
+                "amsel_ids": [0]
+            },
+            {
+                "dst_bundle": "South",
+                "dst_channel": 0,
+                "amsel_ids": [1]
+            }
+        ],
+        "packet_rules": [
+            {
+                "src_bundle": "South",
+                "src_channel": 0,
+                "rules": [
+                    {
+                        "mask": 31,
+                        "value": 0,
+                        "amsel_id": 0
+                    },
+                    {
+                        "mask": 31,
+                        "value": 16,
+                        "amsel_id": 0
+                    }
+                ]
+            },
+            {
+                "src_bundle": "DMA",
+                "src_channel": 0,
+                "rules": [
+                    {
+                        "mask": 31,
+                        "value": 1,
+                        "amsel_id": 1
+                    }
+                ]
+            }
+        ],
+        "connections": [
+            {
+                "src_bundle": "South",
+                "src_channel": 1,
+                "dst_bundle": "DMA",
+                "dst_channel": 1
+            }
+        ]
+    }
+]
+}

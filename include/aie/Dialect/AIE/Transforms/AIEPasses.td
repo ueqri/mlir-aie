@@ -223,6 +223,22 @@ def AIEPathToRouting : Pass<"aie-path-to-routing", "DeviceOp"> {
   ];
 }
 
+def PnRApplyRouting : Pass<"pnr-apply-routing", "DeviceOp"> {
+  let summary = "Apply routing results from PnR tool";
+  let description = [{
+    Apply routing results from PnR tool by updating aie.switchbox operations.
+  }];
+
+  let constructor = "xilinx::AIE::createPnRApplyRoutingPass()";
+  let dependentDialects = [
+    "xilinx::AIE::AIEDialect",
+  ];
+  let options = [
+    Option<"clRoutingFilePath", "routing-file-path","std::string", /*default=*/"std::string(\"pnr_placed_netlist.json\")",
+      "File containing routing results from PnR tool.">
+  ];
+}
+
 def AIEReconstructRouting : Pass<"aie-reconstruct-routing", "DeviceOp"> {
   let summary = "Diagnostic pass for extracting routing information";
   let description = [{

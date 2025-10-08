@@ -20,6 +20,7 @@ add_mlir_dialect_library(
   AIEObjectFifoToPath.cpp
   AIEPathToRouting.cpp
   AIEReconstructRouting.cpp
+  PnRApplyRouting.cpp
   AIELocalizeLocks.cpp
   AIENormalizeAddressSpaces.cpp
   AIEVectorOpt.cpp
