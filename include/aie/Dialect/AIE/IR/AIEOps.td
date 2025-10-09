@@ -441,7 +441,7 @@ def AIE_PnRFlowOp : AIE_Op<"pnr_flow", []> {
         OptionalAttr<AIEI8Attr>:$packet_id
   );
   let assemblyFormat = [{
-    `(` $source `->` `[` $dests `]` `,` $source_bundle `:` $source_channel `,` $dest_bundle `:` `[` $dest_channels `]` (`,` `packet_id` `:` $packet_id^)? `)` attr-dict
+    `(` $source `->` `[` $dests `]` `,` $source_bundle `:` $source_channel `,` $dest_bundle `:` $dest_channels (`,` `packet_id` `:` $packet_id^)? `)` attr-dict
   }];
 }
 
