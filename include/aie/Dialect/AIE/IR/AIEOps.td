@@ -430,28 +430,18 @@ def AIE_ConnectOp: AIE_Op<"connect", [ParentOneOf<["SwitchboxOp", "ShimMuxOp"]> 
   }];
 }
 
-// These are temporary dialects, the goal is to elevate these to generic set of routing dialects for the future of PnR
-def AIE_NeighbourPathOp : AIE_Op<"neighbour_path", []> {
+def AIE_PnRFlowOp : AIE_Op<"pnr_flow", []> {
   let arguments = (
     ins Index:$source,
-        Variadic<Index>:$dests
+        WireBundle:$source_bundle,
+        ConfinedAttr<AIEI32Attr, [IntMinValue<0>]>:$source_channel,
+        Variadic<Index>:$dests,
+        WireBundle:$dest_bundle,
+        ConfinedAttr<DenseI32ArrayAttr, [DenseArrayNonNegative<DenseI32ArrayAttr>]>:$dest_channels,
+        OptionalAttr<AIEI8Attr>:$packet_id
   );
-  let summary = "An explicit path op to indicate using local memory access between cores";
-  let description = [{
-    The aie.neighbour_path operation represents a path between two adjacent cores that is expected to use local memory.
-    In the current architecture, adjacent tiles always communicate via local memory access. However, in cases
-    where they use circuit‑switched connections, we need a way to explicitly indicate which pairs do use local
-    memory access. This op is removed during PnR.
-
-    Example:
-    ```
-      %00 = aie.tile(0, 0)
-      %11 = aie.tile(1, 1)
-      aie.neighbour_path(%00, %11)
-    ```
-  }];
   let assemblyFormat = [{
-    `(` $source `,` $dests `)` attr-dict
+    `(` $source `->` `[` $dests `]` `,` $source_bundle `:` $source_channel `,` $dest_bundle `:` `[` $dest_channels `]` (`,` `packet_id` `:` $packet_id^)? `)` attr-dict
   }];
 }
 
@@ -1794,7 +1784,8 @@ def AIE_ObjectFifoCreateOp: AIE_Op<"objectfifo", [HasParent<"DeviceOp">, Symbol]
         OptionalAttr<ConfinedAttr<AIEI32Attr, [IntMinValue<1>]>>:$repeat_count,
         InitValuesArrayAttr:$initValues,
         OptionalAttr<BDPadLayoutArrayAttr>:$padDimensions,
-        OptionalAttr<ArrayAttr>:$hop_tile_ids
+        OptionalAttr<ArrayAttr>:$hop_tile_ids,
+        OptionalAttr<AIEI8Attr>:$packet_id
   );
 
   let assemblyFormat = [{

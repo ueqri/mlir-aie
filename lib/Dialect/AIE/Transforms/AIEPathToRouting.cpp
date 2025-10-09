@@ -519,10 +519,10 @@ struct AIEPathToRoutingPass : public AIEPathToRoutingBase<AIEPathToRoutingPass> 
     // Remove old ops
     //===------------------------------------------------------------------===//
     SetVector<Operation *> opsToErase;
-    device.walk([&](Operation *op) {
-      if (isa<CircuitPathOp, NeighbourPathOp>(op))
-        opsToErase.insert(op);
-    });
+    // device.walk([&](Operation *op) {
+    //   if (isa<CircuitPathOp, NeighbourPathOp>(op))
+    //     opsToErase.insert(op);
+    // });
     SmallVector<Operation *> sorted{opsToErase.begin(), opsToErase.end()};
     computeTopologicalSorting(sorted);
     for (auto *op : llvm::reverse(sorted))
