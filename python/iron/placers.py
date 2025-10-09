@@ -158,8 +158,8 @@ class SAPlacer(Placer):
 
         # Build nodes
         for ep, n_id in eps_to_ids.items():
-            t_type, row_y = self._get_node_info(ep.tile)
-            data["nodes"].append({"id": n_id, "type": t_type, "col_x": -1, "row_y": row_y})
+            t_type, _ = self._get_node_info(ep.tile)
+            data["nodes"].append({"id": n_id, "type": t_type, "col_x": -1, "row_y": -1})
 
         # Build links
         link_set = set()
