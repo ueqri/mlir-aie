@@ -203,7 +203,8 @@ class SAPlacer(Placer):
         # Load placed netlist
         with open("build/pnr_placed_netlist.json", "r") as f:
             placed_data = json.load(f)
-
+        if placed_data["routing"]["routing_cost"] >= 1e9:
+            raise RuntimeError("PnR failed to find a valid placement and routing!")
         # Map coordinates to tiles
         coord_to_tile: dict[tuple[int, int], Tile] = {}
         for node in placed_data["nodes"]:
