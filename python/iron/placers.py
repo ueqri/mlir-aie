@@ -81,6 +81,43 @@ def subprocess_run_cmd(cmd, cwd=None, env=None, timeout_sec=36000):
         is_timed_out=is_timed_out,
     )
 
+class IdentityDictWithReverse:
+    """
+    Identity-based dict with reverse mapping value -> key. Used to overwrite default RuntimeEndpoint
+    equality and hashing behavior.
+    """
+    def __init__(self):
+        self._data: dict[int, int] = {}
+        self._objects: dict[int, object] = {}
+        self._reverse: dict[int, object] = {}
+
+    def __setitem__(self, key: object, value: int):
+        key_id = id(key)
+        self._data[key_id] = value
+        self._objects[key_id] = key
+        self._reverse[value] = key
+
+    def __getitem__(self, key: object) -> int:
+        return self._data[id(key)]
+
+    def get_key(self, value: int) -> object:
+        return self._reverse[value]
+
+    def __contains__(self, key: object) -> bool:
+        return id(key) in self._data
+
+    def items(self):
+        for key_id, obj in self._objects.items():
+            yield obj, self._data[key_id]
+
+    def keys(self):
+        return self._objects.values()
+
+    def values(self):
+        return self._data.values()
+
+    def __len__(self):
+        return len(self._data)
 
 class Placer(metaclass=ABCMeta):
     """Placer is an abstract class to define the interface between the Program
@@ -134,13 +171,19 @@ class SAPlacer(Placer):
 
         fifo_ids = {of: idx for idx, of in enumerate(of_list)}
         id_to_fifo = {idx: of for idx, of in enumerate(of_list)}
-        eps_to_ids: dict[ObjectFifoEndpoint, int] = {}
-        ids_to_eps: dict[int, ObjectFifoEndpoint] = {}
+        eps_to_ids = IdentityDictWithReverse()
+
+        def get_or_assign_id(ep: ObjectFifoEndpoint) -> int:
+            if ep in eps_to_ids:
+                return eps_to_ids[ep]
+            new_id = len(eps_to_ids)
+            eps_to_ids[ep] = new_id
+            return new_id
 
         # Build nets
         for idx, of in enumerate(of_list):
-            src_node_id = self._get_or_assign_id(eps_to_ids, ids_to_eps, of._prod.endpoint)
-            dst_node_ids = [self._get_or_assign_id(eps_to_ids, ids_to_eps, c.endpoint) for c in of._cons]
+            src_node_id = get_or_assign_id(of._prod.endpoint)
+            dst_node_ids = [get_or_assign_id(c.endpoint) for c in of._cons]
             depths = of._get_depths()
             if not isinstance(depths, list):
                 depths = [depths]
@@ -203,8 +246,11 @@ class SAPlacer(Placer):
         # Load placed netlist
         with open("build/pnr_placed_netlist.json", "r") as f:
             placed_data = json.load(f)
+        
+        # Check if PnR fails to find valid placement/routing
         if placed_data["routing"]["routing_cost"] >= 1e9:
             raise RuntimeError("PnR failed to find a valid placement and routing!")
+
         # Map coordinates to tiles
         coord_to_tile: dict[tuple[int, int], Tile] = {}
         for node in placed_data["nodes"]:
@@ -213,9 +259,11 @@ class SAPlacer(Placer):
             if t is None:
                 t = Tile(*coord)
                 coord_to_tile[coord] = t
-            ids_to_eps[node["id"]].place(t)
-        # assert every endpoint.tile is instance Tile
-        for ep, n_id in eps_to_ids.items():
+            ep = eps_to_ids.get_key(node["id"])
+            ep.place(t)
+
+        # Verify every endpoint.tile is instance Tile
+        for ep, _ in eps_to_ids.items():
             if not isinstance(ep.tile, Tile):
                 raise ValueError(f"Endpoint {ep} was not placed by placer!")
         # Apply net placements and routing info
@@ -264,17 +312,7 @@ class SAPlacer(Placer):
         else:
             raise ValueError("Unknown tile type." + str(tile))
 
-    def _get_or_assign_id(
-        self, 
-        endpoint_to_ids, 
-        ids_to_endpoints, 
-        endpoint
-    ):
-        if endpoint not in endpoint_to_ids:
-            new_id = len(endpoint_to_ids)
-            endpoint_to_ids[endpoint] = new_id
-            ids_to_endpoints[new_id] = endpoint
-        return endpoint_to_ids[endpoint]
+    
 
 class SequentialPlacer(Placer):
     """SequentialPlacer is a simple implementation of a placer. The SequentialPlacer is so named
