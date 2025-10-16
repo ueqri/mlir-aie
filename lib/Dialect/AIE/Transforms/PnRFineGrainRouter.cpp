@@ -204,10 +204,9 @@ LogicalResult fineGrainRouter::routeFlow(const AIETargetModel &targetModel,
   for (size_t hopIdx = 0; hopIdx < hopInfos.size(); hopIdx++) {
     HopInfo &hi = hopInfos[hopIdx];
     std::set<std::pair<TileID, TileID>> seenEdges;
-    std::set<std::pair<TileID, Port>> srcPortsToUse;
-    std::set<std::pair<TileID, Port>> dstPortsToUse;
-
+    std::set<std::tuple<TileID, Port, bool>> portsToUse;
     for (size_t pIdx = 0; pIdx < numPaths; pIdx++) {
+      LLVM_DEBUG(llvm::dbgs() << "processing hop " << hopIdx << " path " << pIdx << "\n");
       // Each path may be different length and may have
       // ended early; skip those paths.
       if (!hi.tilesAtHop[pIdx].has_value()) 
@@ -233,7 +232,8 @@ LogicalResult fineGrainRouter::routeFlow(const AIETargetModel &targetModel,
         else
           tmpChan = findPrevChannel(sbConfigs[flowOp][prevTile], getOppositeBundle(srcWB));
         if (tmpChan == -1) {
-          flowOp.emitOpError("Previous tile (")
+          flowOp.emitOpError() << "Flow " << opIndex << " - Hop " << hopIdx
+                << " - Path " << pIdx << ": Previous tile ("
               << prevTile.col << "," << prevTile.row
               << ") was not assigned a dstCh for bundle "
               << stringifyEnum(getOppositeBundle(srcWB)) << " to current tile ("
@@ -252,8 +252,11 @@ LogicalResult fineGrainRouter::routeFlow(const AIETargetModel &targetModel,
           llvm_unreachable("Next tile must exist if current tile is not a dst");
         TileID nextTile = *nextHi.tilesAtHop[pIdx];
 
-        if (seenEdges.count({tile, nextTile}))
+        if (seenEdges.count({tile, nextTile})) {
+          LLVM_DEBUG(llvm::dbgs() << "  already routed this edge, skipping\n");
           continue;
+        }
+          
         seenEdges.insert({tile, nextTile});
 
         WireBundle dstWB = getDirToAdjTile(tile, nextTile);
@@ -274,13 +277,24 @@ LogicalResult fineGrainRouter::routeFlow(const AIETargetModel &targetModel,
         bool isNextMem = targetModel.isMemTile(nextTile.col, nextTile.row);
         if (isCurrentMem && srcWB != WireBundle::DMA) {
           // mem tile passthrough: enforce dst chan == src chan
+          LLVM_DEBUG(llvm::dbgs() << 
+              "  current tile is mem, enforcing dstChan == srcChan\n");
           if (candidateChans.count(srcChan))
             candidateChans = {srcChan};
-          else
+          else {
             candidateChans.clear();
+            flowOp.emitOpError() << "Flow " << opIndex << " - Hop " << hopIdx
+                << " - Path " << pIdx << ": Requires " << stringifyEnum(dstWB) 
+                << ":" << srcChan << " at tile (" << tile.col
+                << "," << tile.row << ") to next tile ("
+                << nextTile.col << "," << nextTile.row << ")";
+            return failure();
+          }
+            
         }
-        else if (isNextMem && !nextHi.dstPorts[pIdx]) {
+        else if (isNextMem) {
           // next tile is mem passthrough: also intersect with next tile's dst chans
+          LLVM_DEBUG(llvm::dbgs() << "  next tile is mem, intersecting with its dstChans\n");
           std::set<int> freeNextDstChans = sbFreeChans[nextTile].getFreeChans(
               dstWB, /*isDst*/true, isPacket);
           std::set<int> tmp;
@@ -291,15 +305,20 @@ LogicalResult fineGrainRouter::routeFlow(const AIETargetModel &targetModel,
         }
 
         if (candidateChans.empty()) {
-          flowOp.emitOpError("No available outCh for bundle ")
+          flowOp.emitOpError() << "Flow " << opIndex << " - Hop " << hopIdx
+              << " - Path " << pIdx << ": No available dstCh for bundle "
               << stringifyEnum(dstWB) << " at tile (" << tile.col 
               << "," << tile.row << ") to next tile ("
               << nextTile.col << "," << nextTile.row << ")";
           return failure();
         }
         int dstChan = *candidateChans.begin();
-        srcPortsToUse.insert({tile, Port{srcWB, srcChan}});
-        dstPortsToUse.insert({tile, Port{dstWB, dstChan}});
+        portsToUse.insert({tile, Port{srcWB, srcChan}, false});
+        portsToUse.insert({tile, Port{dstWB, dstChan}, true});
+        LLVM_DEBUG(llvm::dbgs() << "   tile (" << tile.col << "," << tile.row << "): "
+                     << "reserving " << stringifyEnum(srcWB) << ":" << srcChan
+                     << " -> " << stringifyEnum(dstWB) << ":" << dstChan << "\n");
+        //portsToUse.insert({nextTile, Port{getOppositeBundle(dstWB), dstChan}, false});
         // Record in switchbox config
         if constexpr (std::is_same_v<FlowOpType, PnRPktFlowOp>) {
           pktSbConfigs[flowOp][tile].addSrc(Port{srcWB, srcChan});
@@ -312,8 +331,13 @@ LogicalResult fineGrainRouter::routeFlow(const AIETargetModel &targetModel,
       }
       else {
         // This is a destination tile. Dst port is already known.
-        srcPortsToUse.insert({tile, Port{srcWB, srcChan}});
-        dstPortsToUse.insert({tile, *hi.dstPorts[pIdx]});
+        LLVM_DEBUG(llvm::dbgs() << "  This is a destination tile\n");
+        portsToUse.insert({tile, Port{srcWB, srcChan}, false});
+        portsToUse.insert({tile, *hi.dstPorts[pIdx], true});
+        LLVM_DEBUG(llvm::dbgs() << "   tile (" << tile.col << "," << tile.row << "): "
+                     << "reserving " << stringifyEnum(srcWB) << ":" << srcChan
+                     << " -> " << stringifyEnum(hi.dstPorts[pIdx]->bundle) 
+                     << ":" << hi.dstPorts[pIdx]->channel << "\n");
         // Record in switchbox config
         if constexpr (std::is_same_v<FlowOpType, PnRPktFlowOp>) {
           pktSbConfigs[flowOp][tile].addSrc(Port{srcWB, srcChan});
@@ -326,18 +350,9 @@ LogicalResult fineGrainRouter::routeFlow(const AIETargetModel &targetModel,
       }
     } // end path loop
     // Mark channels after hop is processed to avoid double-marking shared tiles (multi-cast)
-    for (auto const &[tile, port] : srcPortsToUse) {
+    for (auto const &[tile, port, isDst] : portsToUse) {
       if (!sbFreeChans[tile].markUsed(port.bundle, port.channel, 
-                                      /*isDst*/false, isPacket)) {
-        flowOp->emitOpError() << stringifyEnum(port.bundle) << " : " 
-                              << port.channel << " at tile (" << tile.col 
-                              << "," << tile.row << ") not available";
-        return failure();
-      }
-    }
-    for (auto const &[tile, port] : dstPortsToUse) {
-      if (!sbFreeChans[tile].markUsed(port.bundle, port.channel, 
-                                      /*isDst*/true, isPacket)) {
+                                      isDst, isPacket)) {
         flowOp->emitOpError() << stringifyEnum(port.bundle) << " : " 
                               << port.channel << " at tile (" << tile.col 
                               << "," << tile.row << ") not available";

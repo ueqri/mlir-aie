@@ -234,7 +234,6 @@ class SAPlacer(Placer):
             f"{pnr_bin} build/netlist.json "
             "--output=build/pnr_placed_netlist.json "
             "--route-summary=build/pnr_route_summary.json "
-            "--enable-packing "
         )
         if self._pnr_args is not None:
             pnr_cmd += f" {self._pnr_args}"
