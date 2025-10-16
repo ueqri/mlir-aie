@@ -274,6 +274,10 @@ class SAPlacer(Placer):
             if routing["connection_type"] == "circuit_switch":
                 of._via_dma = True
                 of._hop_tile_ids = routing["intermediates"]
+            elif routing["connection_type"] == "packet_switch":
+                of._via_dma = True
+                of._hop_tile_ids = routing["intermediates"]
+                of._pkt = True
             elif routing["connection_type"] == "neighbor_sharing":
                 alloc_tiles = []
                 for tile_loc in routing["allocation_tiles"]:

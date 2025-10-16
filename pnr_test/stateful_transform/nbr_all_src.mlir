@@ -1,4 +1,4 @@
-// RUN: aie-opt --aie-objectFifo-to-path %s | FileCheck %s
+// RUN: aie-opt --pnr-stateful-transform %s 2>/dev/null | filecheck %s
 // CHECK-LABEL:   aie.device(npu2) {
 // CHECK:           %[[VAL_0:.*]] = aie.tile(1, 3)
 // CHECK:           %[[VAL_1:.*]] = aie.tile(1, 4)

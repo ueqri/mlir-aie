@@ -1,4 +1,4 @@
-// RUN: aie-opt --aie-objectFifo-to-path %s | FileCheck %s
+// RUN: aie-opt --pnr-stateful-transform %s 2>/dev/null | filecheck %s
 // CHECK-LABEL:   aie.device(npu2) {
 // CHECK:           memref.global "public" @of2_cons : memref<256xi32>
 // CHECK:           memref.global "public" @of2 : memref<256xi32>
@@ -44,10 +44,10 @@
 // CHECK:           %[[VAL_33:.*]] = aie.buffer(%[[VAL_0]]) {sym_name = "ofc_buff_1"} : memref<256xi32>
 // CHECK:           %[[VAL_34:.*]] = aie.lock(%[[VAL_0]], 0) {init = 2 : i32, sym_name = "ofc_prod_lock_0"}
 // CHECK:           %[[VAL_35:.*]] = aie.lock(%[[VAL_0]], 1) {init = 0 : i32, sym_name = "ofc_cons_lock_0"}
-// CHECK:           aie.pnr_flow(%[[VAL_0]] -> {{\[}}%[[VAL_1]]], DMA : 0, DMA : [0])
-// CHECK:           aie.pnr_flow(%[[VAL_0]] -> {{\[}}%[[VAL_1]]], DMA : 1, DMA : [1], packet_id : 0)
-// CHECK:           aie.pnr_flow(%[[VAL_0]] -> {{\[}}%[[VAL_2]]], DMA : 1, DMA : [0], packet_id : 1)
-// CHECK:           aie.pnr_flow(%[[VAL_0]] -> {{\[}}%[[VAL_3]]], DMA : 1, DMA : [0], packet_id : 2)
+// CHECK:           aie.pnr_flow(%[[VAL_0]], DMA : 0, {%[[VAL_1]]}, DMA : [0]) {hop_tile_ids = []}
+// CHECK:           aie.pnr_pktflow(%[[VAL_0]], DMA : 1, {%[[VAL_1]]}, DMA : [1], packet_id : 0) {hop_tile_ids = []}
+// CHECK:           aie.pnr_pktflow(%[[VAL_0]], DMA : 1, {%[[VAL_2]]}, DMA : [0], packet_id : 1) {hop_tile_ids = []}
+// CHECK:           aie.pnr_pktflow(%[[VAL_0]], DMA : 1, {%[[VAL_3]]}, DMA : [0], packet_id : 2) {hop_tile_ids = []}
 // CHECK:           %[[VAL_36:.*]] = aie.mem(%[[VAL_0]]) {
 // CHECK:             %[[VAL_37:.*]] = aie.dma_start(MM2S, 0, ^bb1, ^bb3)
 // CHECK:           ^bb1:
@@ -172,8 +172,8 @@ module @merge_pkt_src {
         // 1 circuit-switched fifo
         aie.objectfifo @ofc (%tile12, {%tile33}, 2 : i32) {via_DMA = true} : !aie.objectfifo<memref<256xi32>>
         // 3 packet-switched fifos
-        aie.objectfifo @of0 (%tile12, {%tile33}, 2 : i32) {via_DMA = true, packet_id = 0 : i8} : !aie.objectfifo<memref<256xi32>>
-        aie.objectfifo @of1 (%tile12, {%tile34}, 2 : i32) {via_DMA = true, packet_id = 1 : i8} : !aie.objectfifo<memref<256xi32>>
-        aie.objectfifo @of2 (%tile12, {%tile35}, 2 : i32) {via_DMA = true, packet_id = 2 : i8} : !aie.objectfifo<memref<256xi32>>
+        aie.objectfifo @of0 (%tile12, {%tile33}, 2 : i32) {via_DMA = true, pkt = true} : !aie.objectfifo<memref<256xi32>>
+        aie.objectfifo @of1 (%tile12, {%tile34}, 2 : i32) {via_DMA = true, pkt = true} : !aie.objectfifo<memref<256xi32>>
+        aie.objectfifo @of2 (%tile12, {%tile35}, 2 : i32) {via_DMA = true, pkt = true} : !aie.objectfifo<memref<256xi32>>
     }
 }

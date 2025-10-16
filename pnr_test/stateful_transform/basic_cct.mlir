@@ -1,4 +1,4 @@
-// RUN: aie-opt --aie-objectFifo-to-path %s | FileCheck %s
+// RUN: aie-opt --pnr-stateful-transform %s 2>/dev/null | filecheck %s
 // CHECK-LABEL:   aie.device(npu2) {
 // CHECK:           %[[VAL_0:.*]] = aie.tile(1, 2)
 // CHECK:           %[[VAL_1:.*]] = aie.tile(1, 3)
@@ -28,8 +28,8 @@
 // CHECK:           %[[VAL_25:.*]] = aie.buffer(%[[VAL_0]]) {sym_name = "of0_buff_1"} : memref<256xi32>
 // CHECK:           %[[VAL_26:.*]] = aie.lock(%[[VAL_0]], 0) {init = 2 : i32, sym_name = "of0_prod_lock_0"}
 // CHECK:           %[[VAL_27:.*]] = aie.lock(%[[VAL_0]], 1) {init = 0 : i32, sym_name = "of0_cons_lock_0"}
-// CHECK:           aie.pnr_flow(%[[VAL_0]] -> {{\[}}%[[VAL_1]], %[[VAL_2]], %[[VAL_3]]], DMA : 0, DMA : [0, 0, 0])
-// CHECK:           aie.pnr_flow(%[[VAL_0]] -> {{\[}}%[[VAL_1]]], DMA : 1, DMA : [1])
+// CHECK:           aie.pnr_flow(%[[VAL_0]], DMA : 0, {%[[VAL_1]], %[[VAL_2]], %[[VAL_3]]}, DMA : [0, 0, 0]) {hop_tile_ids = [[[1, 2], [1, 3]], [[1, 2], [0, 2]], [[1, 2], [1, 1]]]}
+// CHECK:           aie.pnr_flow(%[[VAL_0]], DMA : 1, {%[[VAL_1]]}, DMA : [1]) {hop_tile_ids = [[[1, 2], [1, 3]]]}
 // CHECK:           %[[VAL_28:.*]] = aie.mem(%[[VAL_0]]) {
 // CHECK:             %[[VAL_29:.*]] = aie.dma_start(MM2S, 0, ^bb1, ^bb3)
 // CHECK:           ^bb1:
@@ -124,7 +124,7 @@ module @basic_cct {
         %tile02 = aie.tile(0, 2)
         %tile11 = aie.tile(1, 1)
 
-        aie.objectfifo @of0 (%tile12, {%tile13, %tile02, %tile11}, [2 : i32, 2 : i32, 2 : i32, 2 : i32]) {via_DMA = true}: !aie.objectfifo<memref<256xi32>>
-        aie.objectfifo @of1 (%tile12, {%tile13}, [2 : i32, 2 : i32]) {via_DMA = true}: !aie.objectfifo<memref<256xi32>>
+        aie.objectfifo @of0 (%tile12, {%tile13, %tile02, %tile11}, [2 : i32, 2 : i32, 2 : i32, 2 : i32]) {via_DMA = true, hop_tile_ids=[[[1,2],[1,3]],[[1,2],[0,2]],[[1,2],[1,1]]]}: !aie.objectfifo<memref<256xi32>>
+        aie.objectfifo @of1 (%tile12, {%tile13}, [2 : i32, 2 : i32]) {via_DMA = true, hop_tile_ids=[[[1,2],[1,3]]] }: !aie.objectfifo<memref<256xi32>>
     }
 }

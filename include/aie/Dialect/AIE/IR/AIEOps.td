@@ -438,10 +438,68 @@ def AIE_PnRFlowOp : AIE_Op<"pnr_flow", []> {
         Variadic<Index>:$dests,
         WireBundle:$dest_bundle,
         ConfinedAttr<DenseI32ArrayAttr, [DenseArrayNonNegative<DenseI32ArrayAttr>]>:$dest_channels,
-        OptionalAttr<AIEI8Attr>:$packet_id
+        ArrayAttr:$hop_tile_ids
   );
   let assemblyFormat = [{
-    `(` $source `->` `[` $dests `]` `,` $source_bundle `:` $source_channel `,` $dest_bundle `:` $dest_channels (`,` `packet_id` `:` $packet_id^)? `)` attr-dict
+    `(` $source `,` $source_bundle `:` $source_channel `,` `{` $dests `}`  `,` $dest_bundle `:` $dest_channels `)` attr-dict
+  }];
+  let extraClassDeclaration = [{
+    std::vector<std::vector<TileID>> getTilesAlongPath() {
+      std::vector<std::vector<TileID>> paths;
+
+      auto arr3dAttr = getHopTileIds();
+
+      for (auto arr2dAttrRaw : arr3dAttr) {
+        auto arr2dAttr = llvm::dyn_cast<mlir::ArrayAttr>(arr2dAttrRaw);
+        std::vector<TileID> pathPerDst;
+
+        for (auto arr1dAttrRaw : arr2dAttr) {
+          auto arr1dAttr = llvm::dyn_cast<mlir::ArrayAttr>(arr1dAttrRaw);
+          int col = llvm::dyn_cast<mlir::IntegerAttr>(arr1dAttr[0]).getInt();
+          int row = llvm::dyn_cast<mlir::IntegerAttr>(arr1dAttr[1]).getInt();
+          pathPerDst.push_back({col, row});
+        }
+        paths.push_back(std::move(pathPerDst));
+      }
+      return paths;
+    }
+  }];
+}
+
+def AIE_PnRPktFlowOp : AIE_Op<"pnr_pktflow", []> {
+  let arguments = (
+    ins Index:$source,
+        WireBundle:$source_bundle,
+        ConfinedAttr<AIEI32Attr, [IntMinValue<0>]>:$source_channel,
+        Variadic<Index>:$dests,
+        WireBundle:$dest_bundle,
+        ConfinedAttr<DenseI32ArrayAttr, [DenseArrayNonNegative<DenseI32ArrayAttr>]>:$dest_channels,
+        ArrayAttr:$hop_tile_ids,
+        AIEI8Attr:$packet_id
+  );
+  let assemblyFormat = [{
+    `(` $source `,` $source_bundle `:` $source_channel `,` `{` $dests `}` `,` $dest_bundle `:` $dest_channels `,` `packet_id` `:` $packet_id `)` attr-dict
+  }];
+  let extraClassDeclaration = [{
+    std::vector<std::vector<TileID>> getTilesAlongPath() {
+      std::vector<std::vector<TileID>> paths;
+
+      auto arr3dAttr = getHopTileIds();
+
+      for (auto arr2dAttrRaw : arr3dAttr) {
+        auto arr2dAttr = llvm::dyn_cast<mlir::ArrayAttr>(arr2dAttrRaw);
+        std::vector<TileID> pathPerDst;
+
+        for (auto arr1dAttrRaw : arr2dAttr) {
+          auto arr1dAttr = llvm::dyn_cast<mlir::ArrayAttr>(arr1dAttrRaw);
+          int col = llvm::dyn_cast<mlir::IntegerAttr>(arr1dAttr[0]).getInt();
+          int row = llvm::dyn_cast<mlir::IntegerAttr>(arr1dAttr[1]).getInt();
+          pathPerDst.push_back({col, row});
+        }
+        paths.push_back(std::move(pathPerDst));
+      }
+      return paths;
+    }
   }];
 }
 
@@ -1776,6 +1834,7 @@ def AIE_ObjectFifoCreateOp: AIE_Op<"objectfifo", [HasParent<"DeviceOp">, Symbol]
         BDDimLayoutArrayAttr:$dimensionsToStream,
         BDDimLayoutArrayArrayAttr:$dimensionsFromStreamPerConsumer,
         DefaultValuedAttr<BoolAttr, "false">:$via_DMA,
+        DefaultValuedAttr<BoolAttr, "false">:$pkt,
         DefaultValuedAttr<BoolAttr, "false">:$plio,
         // disable_synchronization==true will skip lock generation for
         // objectfifo synchronous accesses

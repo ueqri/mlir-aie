@@ -24,7 +24,7 @@ using namespace xilinx;
 using namespace xilinx::AIE;
 using json = nlohmann::ordered_json;
 
-#define DEBUG_TYPE "aie-objectFifo-to-path"
+#define DEBUG_TYPE "pnr-stateful-transform"
 
 #define LOOP_VAR_DEPENDENCY (-2)
 
@@ -117,7 +117,7 @@ public:
 //===----------------------------------------------------------------------===//
 // Create objectFifos Pass
 //===----------------------------------------------------------------------===//
-struct AIEObjectFifoToPathPass : public AIEObjectFifoToPathBase<AIEObjectFifoToPathPass> {
+struct PnRStatefulTransformPass : public PnRStatefulTransformBase<PnRStatefulTransformPass> {
   DenseMap<ObjectFifoCreateOp, std::vector<BufferOp>>
       buffersPerFifo; // maps each objFifo to its corresponding buffer
   DenseMap<ObjectFifoCreateOp, std::vector<ExternalBufferOp>>
@@ -1262,6 +1262,18 @@ struct AIEObjectFifoToPathPass : public AIEObjectFifoToPathBase<AIEObjectFifoToP
     }
   }
 
+  /// Account for already used packet IDs and return next available ID.
+  int getStartPacketID(DeviceOp &device) {
+    int packetID = 0;
+    for (PacketFlowOp packetflow : device.getOps<PacketFlowOp>()) {
+      if (packetflow.getID() > packetID) {
+        // compute next available ID
+        packetID = packetflow.getID() + 1;
+      }
+    }
+    return packetID;
+  }
+
   // Function to clone FIFO usage in the Producer core for multicast cases where 
   // consumer-side buffers are required. The function rewrites the FIFO 
   // as multiple 1-to-1 FIFOs and duplicates Producer operations, cloning 
@@ -1628,17 +1640,21 @@ struct AIEObjectFifoToPathPass : public AIEObjectFifoToPathBase<AIEObjectFifoToP
     //===------------------------------------------------------------------===//
     // Only the objectFifos we split above require DMA communication; the others
     // rely on shared memory and share the same buffers.
+    int packetID = getStartPacketID(device);
     for (auto &[producer, consumers] : splitDmaFifos) {
       int producerChanIndex = -1;
       bool canMerge= false;
       auto prodTileOp = producer.getProducerTileOp();
 
       std::optional<PacketInfoAttr> bdPacket = {};
-      if (producer.getPacketId().has_value()) {
+      if (producer.getPkt()) {
+        if (packetID > 31)
+          device.emitOpError("max number of packet IDs reached (31)");
         bdPacket = {AIE::PacketInfoAttr::get(ctx,
-            /*pkt_type*/ 0, /*pkt_id*/ *producer.getPacketId())};
-        llvm::dbgs() << "Using packet id " << *producer.getPacketId() << " for fifo " 
+            /*pkt_type*/ 0, /*pkt_id*/ packetID)};
+        llvm::dbgs() << "Using packet id " << packetID << " for fifo " 
                      << producer.name() << "\n";
+        packetID++;
       }
       
       // check if packet switched and if there is an existing DMA channel
@@ -1708,15 +1724,24 @@ struct AIEObjectFifoToPathPass : public AIEObjectFifoToPathBase<AIEObjectFifoToP
               consumerChan.channel, {});
       }
 
-      IntegerAttr pktIdAttr;
-      if (bdPacket)
-        pktIdAttr = builder.getIntegerAttr(builder.getI8Type(), bdPacket->getPktId());
       builder.setInsertionPointAfter(producer);
-      builder.create<PnRFlowOp>(builder.getUnknownLoc(),
+      ArrayAttr hopTileIds = producer.getHopTileIds().has_value() ?
+                             producer.getHopTileIdsAttr()
+                             : ArrayAttr::get(builder.getContext(), {});
+      if (bdPacket)
+        builder.create<PnRPktFlowOp>(builder.getUnknownLoc(),
                               producer.getProducerTile(),
                               producerWireType, producerChan.channel,
                               producer.getConsumerTiles(),
-                              consumerWireType, consChannels, pktIdAttr);
+                              consumerWireType, consChannels,
+                              hopTileIds, bdPacket->getPktId());
+      else
+        builder.create<PnRFlowOp>(builder.getUnknownLoc(),
+                              producer.getProducerTile(),
+                              producerWireType, producerChan.channel,
+                              producer.getConsumerTiles(),
+                              consumerWireType, consChannels,
+                              hopTileIds);
     }
     //===------------------------------------------------------------------===//
     // Statically unroll for loops 
@@ -1966,7 +1991,6 @@ struct AIEObjectFifoToPathPass : public AIEObjectFifoToPathBase<AIEObjectFifoToP
   }
 };
 
-std::unique_ptr<OperationPass<DeviceOp>>
-AIE::createAIEObjectFifoToPathPass() {
-  return std::make_unique<AIEObjectFifoToPathPass>();
+std::unique_ptr<OperationPass<DeviceOp>>AIE::createPnRStatefulTransformPass() {
+  return std::make_unique<PnRStatefulTransformPass>();
 }

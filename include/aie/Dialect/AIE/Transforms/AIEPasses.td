@@ -192,7 +192,7 @@ def AIEPlaceTiles : Pass<"aie-place-tiles", "DeviceOp"> {
   let constructor = "xilinx::AIE::createAIEPlaceTilesPass()";
 }
 
-def AIEObjectFifoToPath : Pass<"aie-objectFifo-to-path", "DeviceOp"> {
+def PnRStatefulTransform : Pass<"pnr-stateful-transform", "DeviceOp"> {
   let summary = "Convert aie.objectFifo operations to aie.path operations";
   let description = [{
     Convert each aie.objectFifo.createObjectFifo operation into PnR's path operation. 
@@ -201,7 +201,7 @@ def AIEObjectFifoToPath : Pass<"aie-objectFifo-to-path", "DeviceOp"> {
     each process.
   }];
 
-  let constructor = "xilinx::AIE::createAIEObjectFifoToPathPass()";
+  let constructor = "xilinx::AIE::createPnRStatefulTransformPass()";
   let dependentDialects = [
     "mlir::scf::SCFDialect",
     "mlir::func::FuncDialect",
@@ -211,13 +211,13 @@ def AIEObjectFifoToPath : Pass<"aie-objectFifo-to-path", "DeviceOp"> {
   ];
 }
 
-def AIEPathToRouting : Pass<"aie-path-to-routing", "DeviceOp"> {
+def PnRFineGrainRouter : Pass<"pnr-fine-grain-router", "DeviceOp"> {
   let summary = "Convert aie.path operations to aie.flow and aie.packetflow operations";
   let description = [{
     Convert Path operations into physical interconnects.
   }];
 
-  let constructor = "xilinx::AIE::createAIEPathToRoutingPass()";
+  let constructor = "xilinx::AIE::createPnRFineGrainRouterPass()";
   let dependentDialects = [
     "xilinx::AIE::AIEDialect",
   ];
