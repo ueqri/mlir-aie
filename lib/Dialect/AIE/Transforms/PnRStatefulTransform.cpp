@@ -24,7 +24,7 @@ using namespace xilinx;
 using namespace xilinx::AIE;
 using json = nlohmann::ordered_json;
 
-#define DEBUG_TYPE "aie-objectFifo-to-path"
+#define DEBUG_TYPE "pnr-stateful-transform"
 
 #define LOOP_VAR_DEPENDENCY (-2)
 
@@ -117,7 +117,7 @@ public:
 //===----------------------------------------------------------------------===//
 // Create objectFifos Pass
 //===----------------------------------------------------------------------===//
-struct AIEObjectFifoToPathPass : public AIEObjectFifoToPathBase<AIEObjectFifoToPathPass> {
+struct PnRStatefulTransformPass : public PnRStatefulTransformBase<PnRStatefulTransformPass> {
   DenseMap<ObjectFifoCreateOp, std::vector<BufferOp>>
       buffersPerFifo; // maps each objFifo to its corresponding buffer
   DenseMap<ObjectFifoCreateOp, std::vector<ExternalBufferOp>>
@@ -135,7 +135,9 @@ struct AIEObjectFifoToPathPass : public AIEObjectFifoToPathBase<AIEObjectFifoToP
   // have been created and should be used
   std::vector<ObjectFifoCreateOp> originalFifoOps; // list of original
   // ObjectFifoCreateOps in the device
-  
+  DenseMap<TileOp, int> pktFlowChannelPerTile; // maps each tile to the index
+  // of the channel used for packet flow
+
   /// Function that returns true if two tiles in the AIE array share a memory
   /// module. share_direction is equal to:
   ///   * -1 if the shared memory module is that of the first input tile,
@@ -471,6 +473,121 @@ struct AIEObjectFifoToPathPass : public AIEObjectFifoToPathBase<AIEObjectFifoToP
              offset, len, succ, dims, padDimensions, bdPacket);
   }
 
+  void mergeDMA(DeviceOp &device, OpBuilder &builder,
+                 ObjectFifoCreateOp op, DMAChannelDir channelDir,
+                 int channelIndex, int lockMode,
+                 BDDimLayoutArrayAttr dims,
+                 std::optional<PacketInfoAttr> bdPacket) {
+    size_t numBlocks = op.size();
+    if (numBlocks == 0)
+      return;
+
+    int acqNum = 1;
+    int relNum = 1;
+
+    auto fifo = llvm::cast<AIEObjectFifoType>(op.getElemType());
+    auto elemType = llvm::cast<MemRefType>(fifo.getElementType());
+    int len = elemType.getNumElements();
+
+    // check for repeat count
+    int repeatCount = 1;
+    if (op.getRepeatCount().has_value())
+      repeatCount = op.getRepeatCount().value();
+
+    // search for the buffers/locks (based on if this objFifo has a link)
+    ObjectFifoCreateOp target = op;
+    if (std::optional<ObjectFifoLinkOp> linkOp = getOptionalLinkOp(op);
+        linkOp.has_value()) {
+      if (objFifoLinks.find(linkOp.value()) != objFifoLinks.end()) {
+        target = objFifoLinks[linkOp.value()];
+        if (target == op) {
+          if (linkOp->getRepeatCount().has_value()) {
+            acqNum *= linkOp->getRepeatCount().value();
+            relNum *= linkOp->getRepeatCount().value();
+          }
+        }
+      }
+    }
+    // search for MemOp
+    Operation *producerMem = nullptr;
+    for (auto memOp : device.getOps<MemOp>()) {
+      if (memOp.getTile() == op.getProducerTile()) {
+        producerMem = memOp.getOperation();
+        break;
+      }
+    }
+    if (producerMem == nullptr) {
+      op.emitOpError("No MemOp found on producer tile, cannot merge packet-flow DMA into it.");
+      return signalPassFailure();
+    }
+    DMAStartOp startOp = nullptr;
+    if (auto mem = dyn_cast<MemOp>(producerMem)) {
+      // Traverse *all* blocks in the mem region
+      for (Block &block : mem.getRegion()) {
+        for (Operation &op : block) {
+          if (auto dmaStart = dyn_cast<DMAStartOp>(op)) {
+            if (dmaStart.getChannelIndex() == channelIndex &&
+                dmaStart.getChannelDir() == channelDir) {
+              startOp = dmaStart;
+              break;
+            }
+          }
+        }
+        if (startOp)
+          break;
+      }
+    }
+
+    if (!startOp) {
+      op.emitOpError("DMAStartOp was not initialized for channel ")
+          << channelIndex << " dir " << (channelDir == DMAChannelDir::MM2S ? "MM2S" : "S2MM")
+          << ", cannot merge packet-flow DMA into it.";
+      return signalPassFailure();
+    }
+    Block *entryBd = startOp.getSuccessor(0);
+    Block *chainBd = startOp.getSuccessor(1);
+    Region &region = producerMem->getRegion(0);
+
+    Block *tailBd = nullptr;
+    for (Block &blk : region) {
+      if (auto nextBd = dyn_cast<NextBDOp>(blk.getTerminator())) {
+        if (nextBd.getSuccessor() == entryBd) {
+          tailBd = &blk;
+          break;
+        }
+      }
+    }
+    if (!tailBd)
+      llvm_unreachable("Could not find tail BD block");
+
+    Block *bdBlock = builder.createBlock(chainBd);
+    tailBd->getTerminator()->setSuccessor(bdBlock, 0);
+    // create new Bd blocks
+    Block *succ;
+    Block *curr = bdBlock;
+    size_t elemIndex = 0;
+    size_t totalBlocks = 0;
+    for (size_t i = 0; i < numBlocks; i++) {
+      if (elemIndex >= buffersPerFifo[target].size())
+        break;
+      for (int r = 0; r < repeatCount; r++) {
+        if (totalBlocks == numBlocks * repeatCount - 1)
+          succ = entryBd;
+        else
+          succ = builder.createBlock(chainBd);
+
+        builder.setInsertionPointToStart(curr);
+        createBdBlock<BufferOp>(builder, target, lockMode, acqNum, relNum,
+                                buffersPerFifo[target][elemIndex], /*offset*/ 0,
+                                len, channelDir, elemIndex, succ, dims,
+                                nullptr, bdPacket);
+        curr = succ;
+        totalBlocks++;
+      }
+      elemIndex++;
+    }
+  }
+
   /// Function that either calls createAIETileDMA(), createShimDMA() or
   /// createMemTileDMA() based on op tile row value.
   void createDMA(DeviceOp &device, OpBuilder &builder, ObjectFifoCreateOp op,
@@ -489,6 +606,15 @@ struct AIEObjectFifoToPathPass : public AIEObjectFifoToPathBase<AIEObjectFifoToP
     } else {
       createAIETileDMA(device, builder, op, channelDir, channelIndex, lockMode,
                        dims, bdPacket);
+      if (channelDir == DMAChannelDir::MM2S && bdPacket.has_value()) {
+        llvm::dbgs() << "Marking channel " << channelIndex
+                     << " on tile (" << op.getProducerTileOp().colIndex()
+                     << "," << op.getProducerTileOp().rowIndex()
+                     << ") as used for packet flow\n";
+        // record channel index as configured to packet flow for this objFifo
+        // can be used later to pack other packet flows on the same channel
+        pktFlowChannelPerTile[op.getProducerTileOp()] = channelIndex;
+      }
     }
   }
 
@@ -1136,6 +1262,18 @@ struct AIEObjectFifoToPathPass : public AIEObjectFifoToPathBase<AIEObjectFifoToP
     }
   }
 
+  /// Account for already used packet IDs and return next available ID.
+  int getStartPacketID(DeviceOp &device) {
+    int packetID = 0;
+    for (PacketFlowOp packetflow : device.getOps<PacketFlowOp>()) {
+      if (packetflow.getID() > packetID) {
+        // compute next available ID
+        packetID = packetflow.getID() + 1;
+      }
+    }
+    return packetID;
+  }
+
   // Function to clone FIFO usage in the Producer core for multicast cases where 
   // consumer-side buffers are required. The function rewrites the FIFO 
   // as multiple 1-to-1 FIFOs and duplicates Producer operations, cloning 
@@ -1295,7 +1433,6 @@ struct AIEObjectFifoToPathPass : public AIEObjectFifoToPathBase<AIEObjectFifoToP
 
     verifyObjectFifoLinks(device);
 
-    LLVM_DEBUG(llvm::dbgs() << "verified fifo links\n");
     auto range = device.getOps<ObjectFifoCreateOp>();
     originalFifoOps.insert(originalFifoOps.end(), range.begin(), range.end());
     
@@ -1451,7 +1588,6 @@ struct AIEObjectFifoToPathPass : public AIEObjectFifoToPathBase<AIEObjectFifoToP
     computeTopologicalSorting(nbrSorted);
     for (auto *op : llvm::reverse(nbrSorted))
       op->erase();
-
     //===------------------------------------------------------------------===//
     // - Create objectFifo buffers and locks.
     // - Populate a list of tiles containing objectFifos for later processing of
@@ -1499,27 +1635,62 @@ struct AIEObjectFifoToPathPass : public AIEObjectFifoToPathBase<AIEObjectFifoToP
         createObjectFifoElements(builder, lockAnalysis, createOp, 0);
       }
     }
-
     //===------------------------------------------------------------------===//
     // Create tile DMAs and build non-neighbour paths
     //===------------------------------------------------------------------===//
     // Only the objectFifos we split above require DMA communication; the others
     // rely on shared memory and share the same buffers.
+    int packetID = getStartPacketID(device);
     for (auto &[producer, consumers] : splitDmaFifos) {
-      // create producer tile DMA
-      int producerChanIndex = dmaAnalysis.getDMAChannelIndex(
-          producer.getProducerTileOp(), DMAChannelDir::MM2S);
+      int producerChanIndex = -1;
+      bool canMerge= false;
+      auto prodTileOp = producer.getProducerTileOp();
+
+      std::optional<PacketInfoAttr> bdPacket = {};
+      if (producer.getPkt()) {
+        if (packetID > 31)
+          device.emitOpError("max number of packet IDs reached (31)");
+        bdPacket = {AIE::PacketInfoAttr::get(ctx,
+            /*pkt_type*/ 0, /*pkt_id*/ packetID)};
+        llvm::dbgs() << "Using packet id " << packetID << " for fifo " 
+                     << producer.name() << "\n";
+        packetID++;
+      }
+      
+      // check if packet switched and if there is an existing DMA channel
+      // configured for pkt-switched comms on this tile, we can merge dma
+      // ONLY for core tile and MM2S direction for now
+      if (!prodTileOp.isShimTile() && !prodTileOp.isMemTile() &&
+          bdPacket.has_value() && pktFlowChannelPerTile.count(prodTileOp) > 0) {
+        producerChanIndex = pktFlowChannelPerTile[prodTileOp];
+        canMerge = true;
+        llvm::dbgs() << "Merging producer DMA for fifo " << producer.name() 
+                     << " on tile (" << prodTileOp.colIndex() << ","
+                     << prodTileOp.rowIndex() << ") to channel "
+                     << producerChanIndex << "\n";
+      }
+      else {
+        // create producer tile DMA
+        llvm::dbgs() << "Creating new MM2S DMA for fifo " 
+                     << producer.name() << " on tile (" 
+                     << prodTileOp.colIndex() << "," 
+                     << prodTileOp.rowIndex() << ")\n";
+        producerChanIndex = dmaAnalysis.getDMAChannelIndex(
+            producer.getProducerTileOp(), DMAChannelDir::MM2S);
+      }
       if (producerChanIndex == -1)
         producer.getProducerTileOp().emitOpError(
             "number of output DMA channel exceeded!");
       DMAChannel producerChan = {DMAChannelDir::MM2S, producerChanIndex};
 
-      //TODO: fill in packet info if needed
-      //std::optional<PacketInfoAttr> bdPacket = {};
-
-      createDMA(device, builder, producer, producerChan.direction,
-                producerChan.channel, 0, producer.getDimensionsToStreamAttr(),
-                producer.getPadDimensionsAttr(), /*TODO_PKT_CHANGE*/{});
+      if (canMerge)
+        mergeDMA(device, builder, producer, producerChan.direction,
+                 producerChan.channel, 0, producer.getDimensionsToStreamAttr(),
+                 bdPacket);
+      else
+        createDMA(device, builder, producer, producerChan.direction,
+                  producerChan.channel, 0, producer.getDimensionsToStreamAttr(),
+                  producer.getPadDimensionsAttr(), bdPacket);
       // generate objectFifo allocation info
       builder.setInsertionPoint(device.getBody()->getTerminator());
 
@@ -1527,9 +1698,7 @@ struct AIEObjectFifoToPathPass : public AIEObjectFifoToPathBase<AIEObjectFifoToP
         createObjectFifoAllocationInfo(
             builder, ctx, SymbolRefAttr::get(ctx, producer.getName()),
             producer.getProducerTileOp().colIndex(), producerChan.direction,
-            producerChan.channel, /*TODO_PKT_CHANGE*/{});
-      
-      //TODO: if it's packet switched, create packetflowop here
+            producerChan.channel, bdPacket);
       
       SmallVector<int32_t> consChannels;
       for (auto consumer : consumers) {
@@ -1547,8 +1716,6 @@ struct AIEObjectFifoToPathPass : public AIEObjectFifoToPathBase<AIEObjectFifoToP
                   consumerChan.channel, 1, consumerDims, nullptr, {});
         // generate objectFifo allocation info
         builder.setInsertionPoint(device.getBody()->getTerminator());
-        
-        //TODO: if packet switched, create a packetdestop at consumer
 
         if (consumer.getProducerTileOp().isShimTile())
           createObjectFifoAllocationInfo(
@@ -1557,33 +1724,25 @@ struct AIEObjectFifoToPathPass : public AIEObjectFifoToPathBase<AIEObjectFifoToP
               consumerChan.channel, {});
       }
 
-      //TODO: if packet switched, create packetsourceop here
-      // create path op TBD
-
-      auto dstChannelsAttr = DenseI32ArrayAttr::get(builder.getContext(),
-          llvm::ArrayRef(consChannels));
       builder.setInsertionPointAfter(producer);
-      builder.create<CircuitPathOp>(builder.getUnknownLoc(),
-                                    producer.getProducerTile(),
-                                    producerWireType, producerChan.channel,
-                                    producer.getConsumerTiles(),
-                                    consumerWireType, dstChannelsAttr,
-                                    producer.getHopTileIds().has_value() ?
-                                        producer.getHopTileIdsAttr()
-                                        : ArrayAttr::get(builder.getContext(), {}));
+      ArrayAttr hopTileIds = producer.getHopTileIds().has_value() ?
+                             producer.getHopTileIdsAttr()
+                             : ArrayAttr::get(builder.getContext(), {});
+      if (bdPacket)
+        builder.create<PnRPktFlowOp>(builder.getUnknownLoc(),
+                              producer.getProducerTile(),
+                              producerWireType, producerChan.channel,
+                              producer.getConsumerTiles(),
+                              consumerWireType, consChannels,
+                              hopTileIds, bdPacket->getPktId());
+      else
+        builder.create<PnRFlowOp>(builder.getUnknownLoc(),
+                              producer.getProducerTile(),
+                              producerWireType, producerChan.channel,
+                              producer.getConsumerTiles(),
+                              consumerWireType, consChannels,
+                              hopTileIds);
     }
-
-    //===------------------------------------------------------------------===//
-    // Create neighbour path ops TODO: see if we should keep this
-    //===------------------------------------------------------------------===//
-    // for (auto createOp : device.getOps<ObjectFifoCreateOp>()) {
-    //   if (createOp.getViaSharedMem().has_value()) {
-    //     builder.setInsertionPointAfter(createOp);
-    //     builder.create<NeighbourPathOp>(builder.getUnknownLoc(), 
-    //                                     createOp.getProducerTile(),
-    //                                     createOp.getConsumerTiles());
-    //   }
-    // }
     //===------------------------------------------------------------------===//
     // Statically unroll for loops 
     //===------------------------------------------------------------------===//
@@ -1832,7 +1991,6 @@ struct AIEObjectFifoToPathPass : public AIEObjectFifoToPathBase<AIEObjectFifoToP
   }
 };
 
-std::unique_ptr<OperationPass<DeviceOp>>
-AIE::createAIEObjectFifoToPathPass() {
-  return std::make_unique<AIEObjectFifoToPathPass>();
+std::unique_ptr<OperationPass<DeviceOp>>AIE::createPnRStatefulTransformPass() {
+  return std::make_unique<PnRStatefulTransformPass>();
 }

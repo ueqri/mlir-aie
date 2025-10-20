@@ -70,7 +70,7 @@ PNR_INPUT_WITH_ADDRESSES_PIPELINE = lambda scheme, ctrl_pkt_overlay: (
         Pipeline()
         .add_pass("aie-assign-lock-ids")
         .add_pass("aie-register-objectFifos")
-        .add_pass("aie-objectFifo-to-path")
+        .add_pass("pnr-stateful-transform")
         .add_pass("aie-assign-bd-ids")
         .add_pass("aie-lower-cascade-flows")
         .add_pass("aie-lower-broadcast-packet")
@@ -81,7 +81,7 @@ PNR_INPUT_WITH_ADDRESSES_PIPELINE = lambda scheme, ctrl_pkt_overlay: (
             route_shim_to_tile_ctrl=ctrl_pkt_overlay,
         )
         .add_pass("aie-assign-buffer-addresses", alloc_scheme=scheme)
-        .add_pass("aie-path-to-routing"),
+        .add_pass("pnr-fine-grain-router"),
     )
     .convert_scf_to_cf()
 )

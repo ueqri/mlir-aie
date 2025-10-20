@@ -40,9 +40,9 @@ createAIEVectorOptPass();
 std::unique_ptr<mlir::OperationPass<DeviceOp>> createAIEPlaceTilesPass();
 std::unique_ptr<mlir::OperationPass<DeviceOp>> createAIEPathfinderPass();
 std::unique_ptr<mlir::OperationPass<DeviceOp>>
-createAIEObjectFifoToPathPass();
+createPnRStatefulTransformPass();
 std::unique_ptr<mlir::OperationPass<DeviceOp>>
-createAIEPathToRoutingPass();
+createPnRFineGrainRouterPass();
 std::unique_ptr<mlir::OperationPass<DeviceOp>>
 createAIEReconstructRoutingPass();
 std::unique_ptr<mlir::OperationPass<DeviceOp>>

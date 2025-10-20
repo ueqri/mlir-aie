@@ -234,7 +234,6 @@ class SAPlacer(Placer):
             f"{pnr_bin} build/netlist.json "
             "--output=build/pnr_placed_netlist.json "
             "--route-summary=build/pnr_route_summary.json "
-            "--enable-packing "
         )
         if self._pnr_args is not None:
             pnr_cmd += f" {self._pnr_args}"
@@ -274,6 +273,10 @@ class SAPlacer(Placer):
             if routing["connection_type"] == "circuit_switch":
                 of._via_dma = True
                 of._hop_tile_ids = routing["intermediates"]
+            elif routing["connection_type"] == "packet_switch":
+                of._via_dma = True
+                of._hop_tile_ids = routing["intermediates"]
+                of._pkt = True
             elif routing["connection_type"] == "neighbor_sharing":
                 alloc_tiles = []
                 for tile_loc in routing["allocation_tiles"]:

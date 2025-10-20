@@ -64,7 +64,8 @@ struct AIEPlaceTilesPass : public AIEPlaceTilesBase<AIEPlaceTilesPass> {
       }
       auto route_info = input["nets"][i]["routing_info"];
 
-      if (route_info["connection_type"] == "circuit_switch") {
+      if (route_info["connection_type"] == "circuit_switch" ||
+          route_info["connection_type"] == "packet_switch") {
         SmallVector<Attribute> outerArray;
 
         for (const auto &hopPath : route_info["intermediates"]) {
@@ -84,6 +85,8 @@ struct AIEPlaceTilesPass : public AIEPlaceTilesBase<AIEPlaceTilesPass> {
         auto fullAttr = builder.getArrayAttr(outerArray); // 3D array as plain ArrayAttr
         fifoOp.setHopTileIdsAttr(fullAttr);
         fifoOp.setVia_DMAAttr(builder.getBoolAttr(true));
+        if (route_info["connection_type"] == "packet_switch")
+          fifoOp.setPktAttr(builder.getBoolAttr(true));
       }
       else if (route_info["connection_type"] == "neighbor_sharing") {
         SmallVector<Value> delegateTileVals;

@@ -77,6 +77,7 @@ class ObjectFifo(Resolvable):
         self._cons: list[ObjectFifoHandle] = []
         self._resolving = False
         self._via_dma: bool = False
+        self._pkt: bool = False
         self._hop_tile_ids: list[list[list[int]]] | None = None
         self._allocation_tiles: list[Tile] | None = None
 
@@ -271,6 +272,7 @@ class ObjectFifo(Resolvable):
                 dimensionsFromStreamPerConsumer=dims_from_stream_per_cons,
                 plio=self._plio,
                 via_DMA=self._via_dma,
+                pkt=self._pkt,
                 hop_tile_ids=self._hop_tile_ids,
                 allocation_tiles=self._allocation_tiles,
             )
