@@ -226,22 +226,25 @@ class SAPlacer(Placer):
         with open("build/netlist.json", "w") as f:
             json.dump(data, f, indent=2)
 
-        
-        # --- Run placer subprocess here ---
-        pnr_bin = os.path.expandvars("$NPU_PNR_BIN_DIR/placer")
-        assert os.path.exists(pnr_bin), f"PnR binary not found at {pnr_bin}"
-        pnr_cmd = str(
-            f"{pnr_bin} build/netlist.json "
-            "--output=build/pnr_placed_netlist.json "
-            "--route-summary=build/pnr_route_summary.json "
-        )
-        if self._pnr_args is not None:
-            pnr_cmd += f" {self._pnr_args}"
-        print(f"Placing and routing: {pnr_cmd} ...", file=sys.stderr, flush=True)
-        cwd = os.getcwd()
-        pnr = subprocess_run_cmd(pnr_cmd, cwd=cwd)
-        pnr.check()
-        print("Finished placing and routing ...", file=sys.stderr, flush=True)
+        if os.path.exists("build/pnr_placed_netlist.json"):
+            print(f"Imported PnR placed netlist ...", file=sys.stderr, flush=True)
+        else:
+            # --- Run placer subprocess here ---
+            pnr_bin = os.path.expandvars("$NPU_PNR_BIN_DIR/placer")
+            assert os.path.exists(pnr_bin), f"PnR binary not found at {pnr_bin}"
+            pnr_cmd = str(
+                f"{pnr_bin} build/netlist.json "
+                "--output=build/pnr_placed_netlist.json "
+                "--route-summary=build/pnr_route_summary.json "
+            )
+            if self._pnr_args is not None:
+                pnr_cmd += f" {self._pnr_args}"
+            print(f"Placing and routing: {pnr_cmd} ...", file=sys.stderr, flush=True)
+            cwd = os.getcwd()
+            pnr = subprocess_run_cmd(pnr_cmd, cwd=cwd)
+            pnr.check()
+            print("Finished placing and routing ...", file=sys.stderr, flush=True)
+
         # Load placed netlist
         with open("build/pnr_placed_netlist.json", "r") as f:
             placed_data = json.load(f)
