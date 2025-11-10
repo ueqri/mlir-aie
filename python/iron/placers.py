@@ -14,6 +14,7 @@ import os
 import sys
 from subprocess import Popen, PIPE, TimeoutExpired
 from dataclasses import dataclass
+import shlex
 
 from .device import Device
 from .runtime import Runtime, RuntimeEndpoint
@@ -223,19 +224,24 @@ class SAPlacer(Placer):
                 "dst_net_ids": dst_net_ids
             })
 
-        with open("build/netlist.json", "w") as f:
+        # Use build_dir from environment if provided, otherwise fall back to 'build'
+        build_dir = os.environ.get("build_dir", "build")
+        os.makedirs(build_dir, exist_ok=True)
+
+        with open(os.path.join(build_dir, "netlist.json"), "w") as f:
             json.dump(data, f, indent=2)
 
-        if os.path.exists("build/pnr_placed_netlist.json"):
+        if os.path.exists(os.path.join(build_dir, "pnr_placed_netlist.json")):
             print(f"Imported PnR placed netlist ...", file=sys.stderr, flush=True)
         else:
             # --- Run placer subprocess here ---
             pnr_bin = os.path.expandvars("$NPU_PNR_BIN_DIR/placer")
             assert os.path.exists(pnr_bin), f"PnR binary not found at {pnr_bin}"
             pnr_cmd = str(
-                f"{pnr_bin} build/netlist.json "
-                "--output=build/pnr_placed_netlist.json "
-                "--route-summary=build/pnr_route_summary.json "
+                f"{pnr_bin} {shlex.quote(os.path.join(build_dir, 'netlist.json'))} "
+                f"--output={shlex.quote(os.path.join(build_dir, 'pnr_placed_netlist.json'))} "
+                f"--route-summary={shlex.quote(os.path.join(build_dir, 'pnr_route_summary.json'))} "
+                f"--routing-viz={shlex.quote(os.path.join(build_dir, 'routing.dot'))}"
             )
             if self._pnr_args is not None:
                 pnr_cmd += f" {self._pnr_args}"
@@ -246,7 +252,7 @@ class SAPlacer(Placer):
             print("Finished placing and routing ...", file=sys.stderr, flush=True)
 
         # Load placed netlist
-        with open("build/pnr_placed_netlist.json", "r") as f:
+        with open(os.path.join(build_dir, "pnr_placed_netlist.json"), "r") as f:
             placed_data = json.load(f)
         
         # Check if PnR fails to find valid placement/routing

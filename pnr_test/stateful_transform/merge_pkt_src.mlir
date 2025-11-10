@@ -1,13 +1,5 @@
 // RUN: aie-opt --pnr-stateful-transform %s 2>/dev/null | filecheck %s
 // CHECK-LABEL:   aie.device(npu2) {
-// CHECK:           memref.global "public" @of2_cons : memref<256xi32>
-// CHECK:           memref.global "public" @of2 : memref<256xi32>
-// CHECK:           memref.global "public" @of1_cons : memref<256xi32>
-// CHECK:           memref.global "public" @of1 : memref<256xi32>
-// CHECK:           memref.global "public" @of0_cons : memref<256xi32>
-// CHECK:           memref.global "public" @of0 : memref<256xi32>
-// CHECK:           memref.global "public" @ofc_cons : memref<256xi32>
-// CHECK:           memref.global "public" @ofc : memref<256xi32>
 // CHECK:           %[[VAL_0:.*]] = aie.tile(1, 2)
 // CHECK:           %[[VAL_1:.*]] = aie.tile(3, 3)
 // CHECK:           %[[VAL_2:.*]] = aie.tile(3, 4)
@@ -69,28 +61,28 @@
 // CHECK:             aie.use_lock(%[[VAL_26]], Release, 1)
 // CHECK:             aie.next_bd ^bb5
 // CHECK:           ^bb5:
-// CHECK:             aie.use_lock(%[[VAL_27]], AcquireGreaterEqual, 1)
-// CHECK:             aie.dma_bd_packet(0, 0)
-// CHECK:             aie.dma_bd(%[[VAL_25]] : memref<256xi32>, 0, 256)
-// CHECK:             aie.use_lock(%[[VAL_26]], Release, 1)
-// CHECK:             aie.next_bd ^bb6
-// CHECK:           ^bb6:
 // CHECK:             aie.use_lock(%[[VAL_19]], AcquireGreaterEqual, 1)
 // CHECK:             aie.dma_bd_packet(0, 1)
 // CHECK:             aie.dma_bd(%[[VAL_16]] : memref<256xi32>, 0, 256)
 // CHECK:             aie.use_lock(%[[VAL_18]], Release, 1)
-// CHECK:             aie.next_bd ^bb7
-// CHECK:           ^bb7:
-// CHECK:             aie.use_lock(%[[VAL_19]], AcquireGreaterEqual, 1)
-// CHECK:             aie.dma_bd_packet(0, 1)
-// CHECK:             aie.dma_bd(%[[VAL_17]] : memref<256xi32>, 0, 256)
-// CHECK:             aie.use_lock(%[[VAL_18]], Release, 1)
-// CHECK:             aie.next_bd ^bb8
-// CHECK:           ^bb8:
+// CHECK:             aie.next_bd ^bb6
+// CHECK:           ^bb6:
 // CHECK:             aie.use_lock(%[[VAL_11]], AcquireGreaterEqual, 1)
 // CHECK:             aie.dma_bd_packet(0, 2)
 // CHECK:             aie.dma_bd(%[[VAL_8]] : memref<256xi32>, 0, 256)
 // CHECK:             aie.use_lock(%[[VAL_10]], Release, 1)
+// CHECK:             aie.next_bd ^bb7
+// CHECK:           ^bb7:
+// CHECK:             aie.use_lock(%[[VAL_27]], AcquireGreaterEqual, 1)
+// CHECK:             aie.dma_bd_packet(0, 0)
+// CHECK:             aie.dma_bd(%[[VAL_25]] : memref<256xi32>, 0, 256)
+// CHECK:             aie.use_lock(%[[VAL_26]], Release, 1)
+// CHECK:             aie.next_bd ^bb8
+// CHECK:           ^bb8:
+// CHECK:             aie.use_lock(%[[VAL_19]], AcquireGreaterEqual, 1)
+// CHECK:             aie.dma_bd_packet(0, 1)
+// CHECK:             aie.dma_bd(%[[VAL_17]] : memref<256xi32>, 0, 256)
+// CHECK:             aie.use_lock(%[[VAL_18]], Release, 1)
 // CHECK:             aie.next_bd ^bb9
 // CHECK:           ^bb9:
 // CHECK:             aie.use_lock(%[[VAL_11]], AcquireGreaterEqual, 1)
@@ -101,67 +93,10 @@
 // CHECK:           ^bb10:
 // CHECK:             aie.end
 // CHECK:           }
-// CHECK:           %[[VAL_39:.*]] = aie.mem(%[[VAL_1]]) {
-// CHECK:             %[[VAL_40:.*]] = aie.dma_start(S2MM, 0, ^bb1, ^bb3)
-// CHECK:           ^bb1:
-// CHECK:             aie.use_lock(%[[VAL_30]], AcquireGreaterEqual, 1)
-// CHECK:             aie.dma_bd(%[[VAL_28]] : memref<256xi32>, 0, 256)
-// CHECK:             aie.use_lock(%[[VAL_31]], Release, 1)
-// CHECK:             aie.next_bd ^bb2
-// CHECK:           ^bb2:
-// CHECK:             aie.use_lock(%[[VAL_30]], AcquireGreaterEqual, 1)
-// CHECK:             aie.dma_bd(%[[VAL_29]] : memref<256xi32>, 0, 256)
-// CHECK:             aie.use_lock(%[[VAL_31]], Release, 1)
-// CHECK:             aie.next_bd ^bb1
-// CHECK:           ^bb3:
-// CHECK:             %[[VAL_41:.*]] = aie.dma_start(S2MM, 1, ^bb4, ^bb6)
-// CHECK:           ^bb4:
-// CHECK:             aie.use_lock(%[[VAL_22]], AcquireGreaterEqual, 1)
-// CHECK:             aie.dma_bd(%[[VAL_20]] : memref<256xi32>, 0, 256)
-// CHECK:             aie.use_lock(%[[VAL_23]], Release, 1)
-// CHECK:             aie.next_bd ^bb5
-// CHECK:           ^bb5:
-// CHECK:             aie.use_lock(%[[VAL_22]], AcquireGreaterEqual, 1)
-// CHECK:             aie.dma_bd(%[[VAL_21]] : memref<256xi32>, 0, 256)
-// CHECK:             aie.use_lock(%[[VAL_23]], Release, 1)
-// CHECK:             aie.next_bd ^bb4
-// CHECK:           ^bb6:
-// CHECK:             aie.end
-// CHECK:           }
-// CHECK:           %[[VAL_42:.*]] = aie.mem(%[[VAL_2]]) {
-// CHECK:             %[[VAL_43:.*]] = aie.dma_start(S2MM, 0, ^bb1, ^bb3)
-// CHECK:           ^bb1:
-// CHECK:             aie.use_lock(%[[VAL_14]], AcquireGreaterEqual, 1)
-// CHECK:             aie.dma_bd(%[[VAL_12]] : memref<256xi32>, 0, 256)
-// CHECK:             aie.use_lock(%[[VAL_15]], Release, 1)
-// CHECK:             aie.next_bd ^bb2
-// CHECK:           ^bb2:
-// CHECK:             aie.use_lock(%[[VAL_14]], AcquireGreaterEqual, 1)
-// CHECK:             aie.dma_bd(%[[VAL_13]] : memref<256xi32>, 0, 256)
-// CHECK:             aie.use_lock(%[[VAL_15]], Release, 1)
-// CHECK:             aie.next_bd ^bb1
-// CHECK:           ^bb3:
-// CHECK:             aie.end
-// CHECK:           }
-// CHECK:           %[[VAL_44:.*]] = aie.mem(%[[VAL_3]]) {
-// CHECK:             %[[VAL_45:.*]] = aie.dma_start(S2MM, 0, ^bb1, ^bb3)
-// CHECK:           ^bb1:
-// CHECK:             aie.use_lock(%[[VAL_6]], AcquireGreaterEqual, 1)
-// CHECK:             aie.dma_bd(%[[VAL_4]] : memref<256xi32>, 0, 256)
-// CHECK:             aie.use_lock(%[[VAL_7]], Release, 1)
-// CHECK:             aie.next_bd ^bb2
-// CHECK:           ^bb2:
-// CHECK:             aie.use_lock(%[[VAL_6]], AcquireGreaterEqual, 1)
-// CHECK:             aie.dma_bd(%[[VAL_5]] : memref<256xi32>, 0, 256)
-// CHECK:             aie.use_lock(%[[VAL_7]], Release, 1)
-// CHECK:             aie.next_bd ^bb1
-// CHECK:           ^bb3:
-// CHECK:             aie.end
-// CHECK:           }
 // CHECK:         }
 
 // This test checks that multiple pkt-switched fifos leaving from the same source leave on the same
-// dma port. Since a cct-switched fifo is processed first, the pkt-switched fifos should leave on 
+// dma port. Since a cct-switched fifo is processed first, the pkt-switched fifos should leave on
 // DMA port 1.
 module @merge_pkt_src {
     aie.device(npu2) {

@@ -137,6 +137,7 @@ struct PnRStatefulTransformPass : public PnRStatefulTransformBase<PnRStatefulTra
   // ObjectFifoCreateOps in the device
   DenseMap<TileOp, int> pktFlowChannelPerTile; // maps each tile to the index
   // of the channel used for packet flow
+  DenseMap<Operation*, SmallVector<Block*>> lastDmaBlocks;
 
   /// Function that returns true if two tiles in the AIE array share a memory
   /// module. share_direction is equal to:
@@ -544,48 +545,46 @@ struct PnRStatefulTransformPass : public PnRStatefulTransformBase<PnRStatefulTra
           << ", cannot merge packet-flow DMA into it.";
       return signalPassFailure();
     }
-    Block *entryBd = startOp.getSuccessor(0);
-    Block *chainBd = startOp.getSuccessor(1);
+    // Block *entryBd = startOp.getSuccessor(0);
+    // Block *chainBd = startOp.getSuccessor(1);
     Region &region = producerMem->getRegion(0);
 
-    Block *tailBd = nullptr;
-    for (Block &blk : region) {
-      if (auto nextBd = dyn_cast<NextBDOp>(blk.getTerminator())) {
-        if (nextBd.getSuccessor() == entryBd) {
-          tailBd = &blk;
-          break;
-        }
-      }
+    size_t totalBlocks = repeatCount * numBlocks;
+    if (totalBlocks != lastDmaBlocks[producerMem].size()) {
+      op.emitOpError("We currently disallow merging packet-flow DMA if fifos are of different depths");
+      return signalPassFailure();
     }
-    if (!tailBd)
-      llvm_unreachable("Could not find tail BD block");
 
-    Block *bdBlock = builder.createBlock(chainBd);
-    tailBd->getTerminator()->setSuccessor(bdBlock, 0);
-    // create new Bd blocks
-    Block *succ;
-    Block *curr = bdBlock;
+    auto createBlockAfter = [&](OpBuilder &b, Region &r, Block *after) -> Block* {
+      auto it = std::next(after->getIterator());
+      return b.createBlock(&r, it);
+    };
+
+    SmallVector<Block*> newBlockList;
     size_t elemIndex = 0;
-    size_t totalBlocks = 0;
-    for (size_t i = 0; i < numBlocks; i++) {
+    for (Block *bdBlock : lastDmaBlocks[producerMem]) {
       if (elemIndex >= buffersPerFifo[target].size())
         break;
+      Block *oldSucc = bdBlock->getTerminator()->getSuccessor(0);
+      Block *curr = createBlockAfter(builder, region, bdBlock);
+      bdBlock->getTerminator()->setSuccessor(curr, 0);
+      Block *succ;
       for (int r = 0; r < repeatCount; r++) {
-        if (totalBlocks == numBlocks * repeatCount - 1)
-          succ = entryBd;
+        if (r == repeatCount - 1)
+          succ = oldSucc;
         else
-          succ = builder.createBlock(chainBd);
-
+          succ = createBlockAfter(builder, region, curr);
+        newBlockList.push_back(curr);
         builder.setInsertionPointToStart(curr);
         createBdBlock<BufferOp>(builder, target, lockMode, acqNum, relNum,
                                 buffersPerFifo[target][elemIndex], /*offset*/ 0,
-                                len, channelDir, elemIndex, succ, dims,
+                                len, channelDir, 0, succ, dims,
                                 nullptr, bdPacket);
         curr = succ;
-        totalBlocks++;
       }
       elemIndex++;
     }
+    lastDmaBlocks[producerMem] = newBlockList;
   }
 
   /// Function that either calls createAIETileDMA(), createShimDMA() or
@@ -607,10 +606,10 @@ struct PnRStatefulTransformPass : public PnRStatefulTransformBase<PnRStatefulTra
       createAIETileDMA(device, builder, op, channelDir, channelIndex, lockMode,
                        dims, bdPacket);
       if (channelDir == DMAChannelDir::MM2S && bdPacket.has_value()) {
-        llvm::dbgs() << "Marking channel " << channelIndex
+        LLVM_DEBUG(llvm::dbgs() << "Marking channel " << channelIndex
                      << " on tile (" << op.getProducerTileOp().colIndex()
                      << "," << op.getProducerTileOp().rowIndex()
-                     << ") as used for packet flow\n";
+                     << ") as used for packet flow\n");
         // record channel index as configured to packet flow for this objFifo
         // can be used later to pack other packet flows on the same channel
         pktFlowChannelPerTile[op.getProducerTileOp()] = channelIndex;
@@ -695,6 +694,8 @@ struct PnRStatefulTransformPass : public PnRStatefulTransformBase<PnRStatefulTra
     // create Bd blocks
     Block *succ;
     Block *curr = bdBlock;
+    if (bdPacket.has_value())
+      lastDmaBlocks[producerMem] = SmallVector<Block*>();
     size_t elemIndex = 0;
     size_t totalBlocks = 0;
     for (size_t i = 0; i < numBlocks; i++) {
@@ -705,6 +706,9 @@ struct PnRStatefulTransformPass : public PnRStatefulTransformBase<PnRStatefulTra
           succ = bdBlock;
         else
           succ = builder.createBlock(endBlock);
+
+        if (bdPacket.has_value())
+          lastDmaBlocks[producerMem].push_back(curr);
 
         builder.setInsertionPointToStart(curr);
         createBdBlock<BufferOp>(builder, target, lockMode, acqNum, relNum,
@@ -1434,8 +1438,8 @@ struct PnRStatefulTransformPass : public PnRStatefulTransformBase<PnRStatefulTra
     verifyObjectFifoLinks(device);
 
     auto range = device.getOps<ObjectFifoCreateOp>();
-    originalFifoOps.insert(originalFifoOps.end(), range.begin(), range.end());
-    
+  originalFifoOps.insert(originalFifoOps.end(), range.begin(), range.end());
+  LLVM_DEBUG(llvm::dbgs() << "=== " << "PnR Stateful Transform Pass" << " ===\n");
     //===------------------------------------------------------------------===//
     // Split objectFifos into a consumer end and producer end if needed
     //===------------------------------------------------------------------===//
@@ -1647,13 +1651,13 @@ struct PnRStatefulTransformPass : public PnRStatefulTransformBase<PnRStatefulTra
       auto prodTileOp = producer.getProducerTileOp();
 
       std::optional<PacketInfoAttr> bdPacket = {};
-      if (producer.getPkt()) {
+        if (producer.getPkt()) {
         if (packetID > 31)
           device.emitOpError("max number of packet IDs reached (31)");
         bdPacket = {AIE::PacketInfoAttr::get(ctx,
             /*pkt_type*/ 0, /*pkt_id*/ packetID)};
-        llvm::dbgs() << "Using packet id " << packetID << " for fifo " 
-                     << producer.name() << "\n";
+        LLVM_DEBUG(llvm::dbgs() << "Using packet id " << packetID << " for fifo " 
+                     << producer.name() << "\n");
         packetID++;
       }
       
@@ -1664,17 +1668,17 @@ struct PnRStatefulTransformPass : public PnRStatefulTransformBase<PnRStatefulTra
           bdPacket.has_value() && pktFlowChannelPerTile.count(prodTileOp) > 0) {
         producerChanIndex = pktFlowChannelPerTile[prodTileOp];
         canMerge = true;
-        llvm::dbgs() << "Merging producer DMA for fifo " << producer.name() 
+        LLVM_DEBUG(llvm::dbgs() << "Merging producer DMA for fifo " << producer.name() 
                      << " on tile (" << prodTileOp.colIndex() << ","
                      << prodTileOp.rowIndex() << ") to channel "
-                     << producerChanIndex << "\n";
+                     << producerChanIndex << "\n");
       }
       else {
         // create producer tile DMA
-        llvm::dbgs() << "Creating new MM2S DMA for fifo " 
+        LLVM_DEBUG(llvm::dbgs() << "Creating new MM2S DMA for fifo " 
                      << producer.name() << " on tile (" 
                      << prodTileOp.colIndex() << "," 
-                     << prodTileOp.rowIndex() << ")\n";
+                     << prodTileOp.rowIndex() << ")\n");
         producerChanIndex = dmaAnalysis.getDMAChannelIndex(
             producer.getProducerTileOp(), DMAChannelDir::MM2S);
       }
