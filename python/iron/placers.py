@@ -232,7 +232,7 @@ class SAPlacer(Placer):
             json.dump(data, f, indent=2)
 
         if os.path.exists(os.path.join(build_dir, "pnr_placed_netlist.json")):
-            print(f"Imported PnR placed netlist ...", file=sys.stdout, flush=True)
+            print(f"Imported PnR placed netlist ...", file=sys.stderr, flush=True)
         else:
             # --- Run placer subprocess here ---
             pnr_bin = os.path.expandvars("$NPU_PNR_BIN_DIR/placer")
@@ -245,13 +245,13 @@ class SAPlacer(Placer):
             )
             if self._pnr_args is not None:
                 pnr_cmd += f" {self._pnr_args}"
-            print(f"Placing and routing: {pnr_cmd} ...", file=sys.stdout, flush=True)
+            print(f"Placing and routing: {pnr_cmd} ...", file=sys.stderr, flush=True)
             cwd = os.getcwd()
             pnr = synch_run_cmd(pnr_cmd, cwd=cwd)
             pnr.check()
-            print(pnr.stdout, file=sys.stdout, flush=True)
-            print(pnr.stderr, file=sys.stderr, flush=True)
-            print("Finished placing and routing ...", file=sys.stdout, flush=True)
+            output_dir = os.environ.get("output_dir", "output")
+            write_text_file(os.path.join(output_dir, "pnr.log"), pnr.stdout)
+            print("Finished placing and routing ...", file=sys.stderr, flush=True)
 
         # Load placed netlist
         with open(os.path.join(build_dir, "pnr_placed_netlist.json"), "r") as f:
