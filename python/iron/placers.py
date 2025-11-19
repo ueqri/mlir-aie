@@ -230,8 +230,9 @@ class SAPlacer(Placer):
 
         with open(os.path.join(build_dir, "netlist.json"), "w") as f:
             json.dump(data, f, indent=2)
-
-        if os.path.exists(os.path.join(build_dir, "pnr_placed_netlist.json")):
+        if os.environ.get("netlist_only", "0") == "1":
+            raise RuntimeError("Netlist-only mode: skipping remaining build flow ...")
+        elif os.path.exists(os.path.join(build_dir, "pnr_placed_netlist.json")):
             print(f"Imported PnR placed netlist ...", file=sys.stderr, flush=True)
         else:
             # --- Run placer subprocess here ---
