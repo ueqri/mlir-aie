@@ -19,45 +19,47 @@ def detect_npu_device():
     Returns:
         The current system device.
     """
-    try:
-        # Run `xrt-smi examine` and capture output
-        result = subprocess.run(
-            ["/opt/xilinx/xrt/bin/xrt-smi", "examine"],
-            check=True,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.DEVNULL,
-            text=True,
-        )
-        output = result.stdout
+    # try:
+    #     # Run `xrt-smi examine` and capture output
+    #     result = subprocess.run(
+    #         ["/opt/xilinx/xrt/bin/xrt-smi", "examine"],
+    #         check=True,
+    #         stdout=subprocess.PIPE,
+    #         stderr=subprocess.DEVNULL,
+    #         text=True,
+    #     )
+    #     output = result.stdout
 
-        # Match strings for NPU2 or NPU1
-        # Set's generic "whole array" devices, this is overkill...
-        if any(
-            keyword.lower() in output.lower()
-            for keyword in [
-                "NPU Strix",
-                "NPU Strix Halo",
-                "NPU Krackan",
-                "RyzenAI-npu4",
-                "RyzenAI-npu6",
-            ]
-        ):
-            return NPU2()
-        elif any(
-            keyword.lower() in output.lower()
-            for keyword in [
-                "NPU Phoenix",
-                "RyzenAI-npu1",
-            ]
-        ):
-            return NPU1Col4()
-        else:
-            raise RuntimeError("No supported NPU device found.")
+    #     # Match strings for NPU2 or NPU1
+    #     # Set's generic "whole array" devices, this is overkill...
+    #     if any(
+    #         keyword.lower() in output.lower()
+    #         for keyword in [
+    #             "NPU Strix",
+    #             "NPU Strix Halo",
+    #             "NPU Krackan",
+    #             "RyzenAI-npu4",
+    #             "RyzenAI-npu6",
+    #         ]
+    #     ):
+    #         return NPU2()
+    #     elif any(
+    #         keyword.lower() in output.lower()
+    #         for keyword in [
+    #             "NPU Phoenix",
+    #             "RyzenAI-npu1",
+    #         ]
+    #     ):
+    #         return NPU1Col4()
+    #     else:
+    #         raise RuntimeError("No supported NPU device found.")
 
-    except FileNotFoundError:
-        raise RuntimeError("xrt-smi not found. Make sure XRT is installed.")
-    except subprocess.CalledProcessError:
-        raise RuntimeError("Failed to run xrt-smi examine.")
+    # except FileNotFoundError:
+    #     raise RuntimeError("xrt-smi not found. Make sure XRT is installed.")
+    # except subprocess.CalledProcessError:
+    #     raise RuntimeError("Failed to run xrt-smi examine.")
+    # For now, default to NPU2()
+    return NPU2()
 
 
 config = {}
