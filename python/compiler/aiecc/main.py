@@ -61,7 +61,7 @@ INPUT_WITH_ADDRESSES_PIPELINE = lambda scheme, dynamic_objFifos, packet_sw_objFi
     .convert_scf_to_cf()
 )
 
-PNR_INPUT_WITH_ADDRESSES_PIPELINE = lambda scheme, ctrl_pkt_overlay: (
+PNR_INPUT_WITH_ADDRESSES_PIPELINE = lambda scheme, dynamic_objFifos, ctrl_pkt_overlay: (
     Pipeline()
     .lower_affine()
     .add_pass("aie-canonicalize-device")
@@ -70,7 +70,7 @@ PNR_INPUT_WITH_ADDRESSES_PIPELINE = lambda scheme, ctrl_pkt_overlay: (
         Pipeline()
         .add_pass("aie-assign-lock-ids")
         .add_pass("aie-register-objectFifos")
-        .add_pass("pnr-stateful-transform")
+        .add_pass("pnr-stateful-transform", dynamic_objFifos=dynamic_objFifos)
         .add_pass("aie-assign-bd-ids")
         .add_pass("aie-lower-cascade-flows")
         .add_pass("aie-lower-broadcast-packet")
@@ -1124,7 +1124,7 @@ class FlowRunner:
 
             if opts.pnr_routing:
                 pass_pipeline = PNR_INPUT_WITH_ADDRESSES_PIPELINE(
-                    opts.alloc_scheme, opts.ctrl_pkt_overlay
+                    opts.alloc_scheme, opts.dynamic_objFifos, opts.ctrl_pkt_overlay
                 ).materialize(module=True)
             else:
                 pass_pipeline = INPUT_WITH_ADDRESSES_PIPELINE(
