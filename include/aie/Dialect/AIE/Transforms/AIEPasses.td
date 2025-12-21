@@ -209,6 +209,11 @@ def PnRStatefulTransform : Pass<"pnr-stateful-transform", "DeviceOp"> {
     "mlir::memref::MemRefDialect",
     "xilinx::AIE::AIEDialect",
   ];
+
+  let options = [
+    Option<"clDynamicObjectFifos", "dynamic-objFifos", "bool", /*default=*/"false", 
+    "Flag to enable dynamic object fifo lowering in cores instead of loop unrolling.">,
+  ];
 }
 
 def PnRFineGrainRouter : Pass<"pnr-fine-grain-router", "DeviceOp"> {
