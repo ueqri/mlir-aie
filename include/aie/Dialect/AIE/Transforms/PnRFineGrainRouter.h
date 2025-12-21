@@ -78,6 +78,7 @@ public:
                                 FlowOpType flowOp, 
                                 bool isPacket,
                                 int opIndex,
+                                bool debugPrint,
                                 int packetId = -1);
   void debugPrintFlatPaths(const Path &pathTiles,
                            const std::vector<HopInfo> &hopInfos, 
@@ -102,7 +103,8 @@ public:
   int getMaxRow() const { return maxRow; }
 
   void initConfigs(DeviceOp &device, const AIETargetModel &targetModel);
-  llvm::LogicalResult routeFlow(DeviceOp &device, const AIETargetModel &targetModel);
+  llvm::LogicalResult routeFlow(DeviceOp &device, const AIETargetModel &targetModel, 
+                                bool debugPrint);
 
   TileOp getTile(mlir::OpBuilder &builder, int col, int row);
 

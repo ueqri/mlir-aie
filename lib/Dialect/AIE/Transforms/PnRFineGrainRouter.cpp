@@ -195,12 +195,14 @@ std::vector<HopInfo> fineGrainRouter::createFlatPaths(FlowOpType flowOp,
 template <typename FlowOpType>
 LogicalResult fineGrainRouter::routeFlow(const AIETargetModel &targetModel, 
                                          FlowOpType flowOp, bool isPacket, 
-                                         int opIndex, int packetId) {
+                                         int opIndex, bool debugPrint,
+                                         int packetId) {
   auto pathTiles = flowOp.getTilesAlongPath();
   size_t numPaths = pathTiles.size();
 
   std::vector<HopInfo> hopInfos = createFlatPaths(flowOp, pathTiles, numPaths);
-  debugPrintFlatPaths(pathTiles, hopInfos, numPaths, opIndex, packetId);
+  if (debugPrint)
+    debugPrintFlatPaths(pathTiles, hopInfos, numPaths, opIndex, packetId);
   for (size_t hopIdx = 0; hopIdx < hopInfos.size(); hopIdx++) {
     HopInfo &hi = hopInfos[hopIdx];
     std::set<std::pair<TileID, TileID>> seenEdges;
@@ -360,7 +362,8 @@ LogicalResult fineGrainRouter::routeFlow(const AIETargetModel &targetModel,
       }
     }
   }
-  debugPrintSbConfigs(flowOp);
+  if (debugPrint)
+    debugPrintSbConfigs(flowOp);
   return success();
 }
 
@@ -388,16 +391,17 @@ void TileAnalyzer::initConfigs(DeviceOp &device, const AIETargetModel &targetMod
   }
 }
 
-LogicalResult TileAnalyzer::routeFlow(DeviceOp &device, const AIETargetModel &targetModel) {
+LogicalResult TileAnalyzer::routeFlow(DeviceOp &device, const AIETargetModel &targetModel,
+                                      bool debugPrint) {
   int opIndex = 0;
   for (auto flowOp : device.getOps<PnRFlowOp>()) {
-    if (failed(router->routeFlow(targetModel, flowOp, /*isPacket*/false, opIndex++))) 
+    if (failed(router->routeFlow(targetModel, flowOp, /*isPacket*/false, opIndex++, debugPrint))) 
       return failure();
   }
 
   for (auto flowOp : device.getOps<PnRPktFlowOp>()) {
     if (failed(router->routeFlow(targetModel, flowOp, /*isPacket*/true,
-                                 opIndex++, flowOp.getPacketId())))
+                                 opIndex++, debugPrint, flowOp.getPacketId())))
       return failure();
   }
   return success();

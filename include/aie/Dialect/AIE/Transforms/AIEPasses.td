@@ -226,6 +226,11 @@ def PnRFineGrainRouter : Pass<"pnr-fine-grain-router", "DeviceOp"> {
   let dependentDialects = [
     "xilinx::AIE::AIEDialect",
   ];
+
+  let options = [
+    Option<"clPrintReport", "print-report", "bool", /*default=*/"false",
+    "Flag to enable printing routing report.">,
+  ];
 }
 
 def AIEReconstructRouting : Pass<"aie-reconstruct-routing", "DeviceOp"> {
