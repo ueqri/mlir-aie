@@ -22,15 +22,17 @@ struct PnRFineGrainRouterPass : public PnRFineGrainRouterBase<PnRFineGrainRouter
                               outBundle, outIndex);
 
     builder.restoreInsertionPoint(point);
-
-    llvm::dbgs() << "  TileID(" << op.colIndex() << ","
+    if (clPrintReport) {
+      llvm::dbgs() << "  TileID(" << op.colIndex() << ","
                  << op.rowIndex() << ") " << inBundle << ":"
                  << inIndex << " -> " << outBundle << ":"
                  << outIndex << "\n";
+    }
   }
 
   void createFlowPhysicals(DeviceOp device, OpBuilder &builder, TileAnalyzer &analyzer) {
-    llvm::dbgs() << "[AIE Connect Ops]\n";
+    if (clPrintReport)
+      llvm::dbgs() << "[AIE Connect Ops]\n";
     for (auto flowOp : device.getOps<PnRFlowOp>()) {
       auto srcTile = cast<TileOp>(flowOp.getSource().getDefiningOp());
       TileID srcCoords = {srcTile.colIndex(), srcTile.rowIndex()};
@@ -126,10 +128,13 @@ struct PnRFineGrainRouterPass : public PnRFineGrainRouterBase<PnRFineGrainRouter
       }
     }
 
-    llvm::dbgs() << "\n[Packet Logical Connects]\n";
+    if (clPrintReport)
+      llvm::dbgs() << "\n[Packet Logical Connects]\n";
     for (const auto &[tileId, connects] : switchboxes) {
-      llvm::dbgs() << "  TileID(" << tileId.col << ", "
-                   << tileId.row << ")\n";
+      if (clPrintReport) {
+        llvm::dbgs() << "TileID(" << tileId.col << ", "
+                     << tileId.row << ")\n";
+      }
       for (const auto &[conn, flowID] : connects) {
         Port sourcePort = conn.src;
         Port destPort = conn.dst;
@@ -138,11 +143,13 @@ struct PnRFineGrainRouterPass : public PnRFineGrainRouterBase<PnRFineGrainRouter
 
         packetFlows[sourceFlow].push_back({tileId, destPort});
         slavePorts.push_back(sourceFlow);
-        llvm::dbgs() << "    PktID " << flowID << ": "
-                     << stringifyWireBundle(sourcePort.bundle) << ":"
-                     << sourcePort.channel << " -> "
-                     << stringifyWireBundle(destPort.bundle) << ":"
-                     << destPort.channel << "\n";
+        if (clPrintReport) {
+          llvm::dbgs() << "    PktID " << flowID << ": "
+                       << stringifyWireBundle(sourcePort.bundle) << ":"
+                       << sourcePort.channel << " -> "
+                       << stringifyWireBundle(destPort.bundle) << ":"
+                       << destPort.channel << "\n";
+        }
       }
     }
 
@@ -423,17 +430,19 @@ struct PnRFineGrainRouterPass : public PnRFineGrainRouterBase<PnRFineGrainRouter
         assignedArbiter = thisArbiter;
       }
     }
-
-    llvm::dbgs() << "\n[Mastersets]\n";
+    if (clPrintReport)
+      llvm::dbgs() << "\n[Mastersets]\n";
     for (const auto &[physPort, values] : mastersets) {
       TileID tileId = physPort.first;
       WireBundle bundle = physPort.second.bundle;
       int channel = physPort.second.channel;
-      llvm::dbgs()
+      if (clPrintReport) {
+        llvm::dbgs()
           << "  " << tileId << " " << stringifyWireBundle(bundle)
           << ":" << channel << '\n';
-      for (auto value : values)
-        llvm::dbgs() << "    Amsel: " << value << '\n';
+        for (auto value : values)
+          llvm::dbgs() << "    Amsel: " << value << '\n';
+      }
     }
 
     // Compute mask values
@@ -739,17 +748,21 @@ struct PnRFineGrainRouterPass : public PnRFineGrainRouterBase<PnRFineGrainRouter
     TileAnalyzer analyzer(maxCol, maxRow);
     analyzer.initConfigs(device, targetModel);
 
-    llvm::dbgs() << "=== " << "PnR Fine Grain Router Pass" << " ===\n";
+    if (clPrintReport)
+      llvm::dbgs() << "=== " << "PnR Fine Grain Router Pass" << " ===\n";
     //===------------------------------------------------------------------===//
     // Set up switchbox configs and interconnects for each flowOp
     //===------------------------------------------------------------------===//
-    if (failed(analyzer.routeFlow(device, targetModel)))
+    if (failed(analyzer.routeFlow(device, targetModel, clPrintReport)))
       return signalPassFailure();
-    llvm::dbgs() << "\n----------------------------------------\n";
-    llvm::dbgs() << "=== Physical Components Report ===\n";
+    if (clPrintReport) {
+      llvm::dbgs() << "\n----------------------------------------\n";
+      llvm::dbgs() << "=== Physical Components Report ===\n";
+    }
     createFlowPhysicals(device, builder, analyzer);
     createPktFlowPhysicals(device, builder, analyzer);
-    llvm::dbgs() << "----------------------------------------\n";
+    if (clPrintReport)
+      llvm::dbgs() << "----------------------------------------\n";
 
     //===------------------------------------------------------------------===//
     // Remove old ops
