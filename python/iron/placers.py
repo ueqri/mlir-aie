@@ -135,7 +135,7 @@ class Placer(metaclass=ABCMeta):
 
 class SAPlacer(Placer):
     """
-    Simulated Annealing Placer
+    PnR Placer
     """
 
     def __init__(self, pnr_args: str = None):
@@ -220,37 +220,51 @@ class SAPlacer(Placer):
 
         with open(os.path.join(build_dir, "netlist.json"), "w") as f:
             json.dump(data, f, indent=2)
+
         if os.environ.get("netlist_only", "0") == "1":
             raise RuntimeError("Netlist-only mode: skipping remaining build flow ...")
         elif os.path.exists(os.path.join(build_dir, "pnr_placed_netlist.json")):
             print(f"Imported PnR placed netlist ...", file=sys.stderr, flush=True)
         else:
-            # --- Run placer subprocess here ---
-            pnr_bin = os.path.expandvars("$NPU_PNR_BIN_DIR/placer")
-            assert os.path.exists(pnr_bin), f"PnR binary not found at {pnr_bin}"
-            pnr_cmd = str(
-                f"{pnr_bin} {shlex.quote(os.path.join(build_dir, 'netlist.json'))} "
-                f"--output={shlex.quote(os.path.join(build_dir, 'pnr_placed_netlist.json'))} "
-                f"--route-summary={shlex.quote(os.path.join(build_dir, 'pnr_route_summary.json'))} "
-                f"--routing-viz={shlex.quote(os.path.join(build_dir, 'routing.dot'))}"
+            # --- Run PnR subprocess here ---
+            translator_bin = os.path.expandvars("$NPU_PNR_BIN_DIR/tools/netlist_translator")
+            pnr_bin = os.path.expandvars("$NPU_PNR_BIN_DIR/apps/pnr")
+
+            if not os.path.exists(translator_bin):
+                raise FileNotFoundError(f"Translator binary not found at {translator_bin}")
+            if not os.path.exists(pnr_bin):
+                raise FileNotFoundError(f"PnR binary not found at {pnr_bin}")
+
+            # TODO: replace python json internals with toml directly
+            # Run translator
+            toml_res = synch_run_cmd(
+                f"{translator_bin} {shlex.quote(os.path.join(build_dir, 'netlist.json'))} "
+                f"--output={shlex.quote(os.path.join(build_dir, 'netlist.toml'))}",
+                cwd=os.getcwd()
+            )
+            toml_res.check()
+            
+            pnr_cmd = (
+                f"{pnr_bin} {shlex.quote(os.path.join(build_dir, 'netlist.toml'))} "
+                f"--output={shlex.quote(os.path.join(build_dir, 'solution.toml'))} "
             )
             if self._pnr_args is not None:
                 pnr_cmd += f" {self._pnr_args}"
-            print(f"Placing and routing: {pnr_cmd} ...", file=sys.stderr, flush=True)
-            cwd = os.getcwd()
-            pnr = synch_run_cmd(pnr_cmd, cwd=cwd)
-            pnr.check()
-            output_dir = os.environ.get("output_dir", "output")
-            write_text_file(os.path.join(output_dir, "pnr.log"), pnr.stdout)
-            print("Finished placing and routing ...", file=sys.stderr, flush=True)
 
+            pnr_res = synch_run_cmd(pnr_cmd, cwd=os.getcwd())
+            pnr_res.check()
+            
+            # Run translator (reverse)
+            json_res = synch_run_cmd(
+                f"{translator_bin} {shlex.quote(os.path.join(build_dir, 'solution.toml'))} "
+                f"--output={shlex.quote(os.path.join(build_dir, 'pnr_placed_netlist.json'))} ",
+                cwd=os.getcwd()
+            )
+            json_res.check()
+            
         # Load placed netlist
         with open(os.path.join(build_dir, "pnr_placed_netlist.json"), "r") as f:
             placed_data = json.load(f)
-        
-        # Check if PnR fails to find valid placement/routing
-        if placed_data["routing"]["routing_cost"] >= 1e9:
-            raise RuntimeError("PnR failed to find a valid placement and routing!")
 
         # Map coordinates to tiles
         coord_to_tile: dict[tuple[int, int], Tile] = {}
