@@ -285,6 +285,8 @@ class SAPlacer(Placer):
         for net in placed_data["nets"]:
             of = id_to_fifo[net["net_id"]]
 
+            if net.get("routing_info") is None:
+                continue
             routing = net["routing_info"]
             if routing["connection_type"] == "circuit_switch":
                 of._via_dma = True
