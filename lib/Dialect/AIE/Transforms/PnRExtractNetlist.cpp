@@ -3,20 +3,15 @@
 #include <fstream>
 #include "json.hpp"
 
-#define DEBUG_TYPE "aie-extract-fifo"
+#define DEBUG_TYPE "pnr-extract-netlist"
 
 using namespace mlir;
 using namespace xilinx;
 using namespace xilinx::AIE;
 using json = nlohmann::ordered_json;
 
-static llvm::cl::opt<std::string> jsonFilePath(
-    "output-netlist-file",
-    llvm::cl::desc("Path to JSON netlist"),
-    llvm::cl::init("netlist.json"));
-
-struct AIEExtractObjectFifoPass
-    : AIEExtractObjectFifoBase<AIEExtractObjectFifoPass> {
+struct PnRExtractNetlistPass
+    : PnRExtractNetlistBase<PnRExtractNetlistPass> {
   void runOnOperation() override {
     DeviceOp device = getOperation();
     int id = 0;
@@ -107,9 +102,9 @@ struct AIEExtractObjectFifoPass
     }
 
     // write json to file
-    std::ofstream outFile(jsonFilePath);
+    std::ofstream outFile(clNetlistFile);
     if (!outFile.is_open()) {
-        llvm::errs() << "Error: Could not open " << jsonFilePath
+        llvm::errs() << "Error: Could not open " << clNetlistFile
                      << " for writing\n";
         return;
     }
@@ -118,6 +113,6 @@ struct AIEExtractObjectFifoPass
   }
 };
 
-std::unique_ptr<OperationPass<DeviceOp>> AIE::createAIEExtractObjectFifoPass() {
-  return std::make_unique<AIEExtractObjectFifoPass>();
+std::unique_ptr<OperationPass<DeviceOp>> AIE::createPnRExtractNetlistPass() {
+  return std::make_unique<PnRExtractNetlistPass>();
 }

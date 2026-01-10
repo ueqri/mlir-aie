@@ -176,20 +176,28 @@ def AIEVectorOpt : Pass<"aie-vector-opt", "mlir::func::FuncOp"> {
   let constructor = "xilinx::AIE::createAIEVectorOptPass()";
 }
 
-def AIEExtractObjectFifo : Pass<"aie-extract-fifo", "DeviceOp"> {
-  let summary = "Extract connection information for placer";
+def PnRExtractNetlist : Pass<"pnr-extract-netlist", "DeviceOp"> {
+  let summary = "Extract netlist for placer";
   let description = [{ 
   }];
 
-  let constructor = "xilinx::AIE::createAIEExtractObjectFifoPass()";
+  let constructor = "xilinx::AIE::createPnRExtractNetlistPass()";
+  let options = [
+    Option<"clNetlistFile", "netlist-file", "std::string", /*default=*/"\"netlist.json\"",
+            "File to output JSON netlist for placer.">,      
+  ];
 }
 
-def AIEPlaceTiles : Pass<"aie-place-tiles", "DeviceOp"> {
+def PnRPlaceTiles : Pass<"pnr-place-tiles", "DeviceOp"> {
   let summary = "Re-place tiles based on placer results";
   let description = [{ 
   }];
 
-  let constructor = "xilinx::AIE::createAIEPlaceTilesPass()";
+  let constructor = "xilinx::AIE::createPnRPlaceTilesPass()";
+  let options = [
+    Option<"clNetlistFile", "netlist-file", "std::string", /*default=*/"\"pnr_placed_netlist.json\"",
+            "File containing tile placement information from placer.">,      
+  ];
 }
 
 def PnRStatefulTransform : Pass<"pnr-stateful-transform", "DeviceOp"> {

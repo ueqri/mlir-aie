@@ -6,25 +6,20 @@
 #include "llvm/Support/raw_ostream.h"
 #include <fstream>
 
-#define DEBUG_TYPE "aie-place-tiles"
+#define DEBUG_TYPE "pnr-place-tiles"
 
 using namespace mlir;
 using namespace xilinx;
 using namespace xilinx::AIE;
 using json = nlohmann::json;
 
-static llvm::cl::opt<std::string> jsonFilePath(
-    "input-netlist-file",
-    llvm::cl::desc("Path to JSON netlist"),
-    llvm::cl::init("netlist.json"));
-
-struct AIEPlaceTilesPass : public AIEPlaceTilesBase<AIEPlaceTilesPass> {
+struct PnRPlaceTilesPass : public PnRPlaceTilesBase<PnRPlaceTilesPass> {
   void runOnOperation() override {
     DeviceOp device = getOperation();
     OpBuilder builder = OpBuilder::atBlockTerminator(device.getBody()); 
-    std::ifstream jsonFile(jsonFilePath);
+    std::ifstream jsonFile(clNetlistFile);
     if (!jsonFile.is_open()) {
-        llvm::errs() << "Failed to open " << jsonFilePath << "\n";
+        llvm::errs() << "Failed to open " << clNetlistFile << "\n";
         return;
     }
 
@@ -132,6 +127,6 @@ struct AIEPlaceTilesPass : public AIEPlaceTilesBase<AIEPlaceTilesPass> {
   }
 };
 
-std::unique_ptr<OperationPass<DeviceOp>> AIE::createAIEPlaceTilesPass() {
-  return std::make_unique<AIEPlaceTilesPass>();
+std::unique_ptr<OperationPass<DeviceOp>> AIE::createPnRPlaceTilesPass() {
+  return std::make_unique<PnRPlaceTilesPass>();
 }

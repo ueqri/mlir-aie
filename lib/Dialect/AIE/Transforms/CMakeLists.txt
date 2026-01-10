@@ -15,8 +15,8 @@ add_mlir_dialect_library(
   AIECreatePathFindFlows.cpp
   AIECoreToStandard.cpp
   AIECanonicalizeDevice.cpp
-  AIEExtractObjectFifo.cpp
-  AIEPlaceTiles.cpp
+  PnRExtractNetlist.cpp
+  PnRPlaceTiles.cpp
   PnRStatefulTransform.cpp
   PnRFineGrainRouter.cpp
   PnRCreateFineGrainRoutes.cpp
