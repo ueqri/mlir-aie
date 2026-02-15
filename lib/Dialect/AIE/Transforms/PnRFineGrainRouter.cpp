@@ -292,9 +292,8 @@ LogicalResult fineGrainRouter::routeFlow(const AIETargetModel &targetModel,
                 << nextTile.col << "," << nextTile.row << ")";
             return failure();
           }
-            
         }
-        else if (isNextMem) {
+        else if (isNextMem && !hopInfos[hopIdx + 1].dstPorts[pIdx].has_value()) {
           // next tile is mem passthrough: also intersect with next tile's dst chans
           LLVM_DEBUG(llvm::dbgs() << "  next tile is mem, intersecting with its dstChans\n");
           std::set<int> freeNextDstChans = sbFreeChans[nextTile].getFreeChans(
