@@ -17,7 +17,7 @@
 ##===----------------------------------------------------------------------===##  
 
 # Default: mlir-aie install at ./install
-BASE_DIR=$(realpath "$(dirname "${BASH_SOURCE[0]}")/..")
+BASE_DIR=$(realpath "$(dirname "${BASH_SOURCE[0]}")/")
 export MLIR_AIE_INSTALL_DIR=$(realpath "${1:-$BASE_DIR/install}")
 
 # Default: Peano from wheel under virtualenv
