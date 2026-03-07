@@ -293,16 +293,28 @@ LogicalResult fineGrainRouter::routeFlow(const AIETargetModel &targetModel,
             return failure();
           }
         }
-        else if (isNextMem && !hopInfos[hopIdx + 1].dstPorts[pIdx].has_value()) {
-          // next tile is mem passthrough: also intersect with next tile's dst chans
-          LLVM_DEBUG(llvm::dbgs() << "  next tile is mem, intersecting with its dstChans\n");
-          std::set<int> freeNextDstChans = sbFreeChans[nextTile].getFreeChans(
-              dstWB, /*isDst*/true, isPacket);
-          std::set<int> tmp;
-          std::set_intersection(candidateChans.begin(), candidateChans.end(),
-                                freeNextDstChans.begin(), freeNextDstChans.end(),
-                                std::inserter(tmp, tmp.begin()));
-          candidateChans = std::move(tmp);
+        else if (isNextMem) {
+          // Check if ANY path sharing this edge requires a mem tile passthrough
+          bool edgeRequiresPassthrough = false;
+          for (size_t qIdx = 0; qIdx < numPaths; qIdx++) {
+            if (hi.tilesAtHop[qIdx] == tile && 
+                hopInfos[hopIdx + 1].tilesAtHop[qIdx] == nextTile &&
+                !hopInfos[hopIdx + 1].dstPorts[qIdx].has_value()) {
+              edgeRequiresPassthrough = true;
+              break;
+            }
+          }
+
+          if (edgeRequiresPassthrough) {
+            LLVM_DEBUG(llvm::dbgs() << "  next tile is mem passthrough for at least one path, intersecting with its dstChans\n");
+            std::set<int> freeNextDstChans = sbFreeChans[nextTile].getFreeChans(
+                dstWB, /*isDst*/true, isPacket);
+            std::set<int> tmp;
+            std::set_intersection(candidateChans.begin(), candidateChans.end(),
+                                  freeNextDstChans.begin(), freeNextDstChans.end(),
+                                  std::inserter(tmp, tmp.begin()));
+            candidateChans = std::move(tmp);
+          }
         }
 
         if (candidateChans.empty()) {
