@@ -16,12 +16,22 @@
 #   source betzgrp_setup.sh 
 ##===----------------------------------------------------------------------===##  
 
-# Default: mlir-aie install at ./install
-BASE_DIR=$(realpath "$(dirname "${BASH_SOURCE[0]}")/")
-export MLIR_AIE_INSTALL_DIR=$(realpath "${1:-$BASE_DIR/install}")
+if [ -n "${BASH_SOURCE[0]:-}" ]; then
+  SCRIPT_PATH="${BASH_SOURCE[0]}"
+elif [ -n "${ZSH_VERSION:-}" ]; then
+  SCRIPT_PATH="${(%):-%x}"
+else
+  SCRIPT_PATH="$0"
+fi
 
-# Default: Peano from wheel under virtualenv
-export PEANO_INSTALL_DIR=$(realpath "${2:-$BASE_DIR/ironenv/lib/python3.13/site-packages/llvm-aie}")
+# Get absolute path to mlir-aie root from script location
+BASE_DIR="$(cd "$(dirname "$SCRIPT_PATH")/.." && pwd)"
+
+# Default: mlir-aie install at mlir-aie/install
+export MLIR_AIE_INSTALL_DIR="${1:-$BASE_DIR/install}"
+
+# Default: Peano from wheel under mlir-aie/ironenv/...
+export PEANO_INSTALL_DIR="${2:-$BASE_DIR/ironenv/lib/python3.13/site-packages/llvm-aie}"
 
 # Export env vars
 export PATH="${MLIR_AIE_INSTALL_DIR}/bin:${PATH}"
