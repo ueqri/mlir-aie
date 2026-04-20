@@ -44,6 +44,8 @@ createPnRStatefulTransformPass();
 std::unique_ptr<mlir::OperationPass<DeviceOp>>
 createPnRFineGrainRouterPass();
 std::unique_ptr<mlir::OperationPass<DeviceOp>>
+createPnRApplyRoutingPass();
+std::unique_ptr<mlir::OperationPass<DeviceOp>>
 createAIEReconstructRoutingPass();
 std::unique_ptr<mlir::OperationPass<DeviceOp>>
 createAIEObjectFifoStatefulTransformPass();

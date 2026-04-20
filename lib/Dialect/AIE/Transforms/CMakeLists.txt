@@ -21,6 +21,7 @@ add_mlir_dialect_library(
   PnRFineGrainRouter.cpp
   PnRCreateFineGrainRoutes.cpp
   AIEReconstructRouting.cpp
+  PnRApplyRouting.cpp
   AIELocalizeLocks.cpp
   AIENormalizeAddressSpaces.cpp
   AIEVectorOpt.cpp
