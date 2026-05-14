@@ -1,11 +1,11 @@
 #!/bin/bash
-##===- utils/env_setup.sh - Setup env for source-built mlir-aie + peano --===##
+##===- utils/betzgrp_setup.sh - Setup env for source-built mlir-aie + peano --===##
 # 
 # Author: James Yen
 # Date: June 2025
 #
 # Usage:
-#   source utils/env_setup.sh [mlir-aie-install-dir] [llvm-aie-wheel-dir]
+#   source utils/betzgrp_setup.sh [mlir-aie-install-dir] [llvm-aie-wheel-dir]
 #
 # Optional:
 #   [mlir-aie-install-dir] =: mlir-aie/install dir name, default is 'install'
